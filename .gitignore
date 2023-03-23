@@ -1,0 +1,12 @@
+.cargo/config.toml
+.venv*
+__pycache__
+cache
+flamegraph*.svg
+pypi_bigquery_analysis/pipy_requires_dist.ndjson
+pypi_bigquery_analysis/pypi_all.ndjson
+resolutions_ours
+resolutions_pip
+sdist_check
+sethmlarson_pypi_data
+target
