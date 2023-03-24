@@ -7,16 +7,17 @@ from unittest.mock import patch
 
 import httpx
 import orjson
+import pypi_types
 import pytest
 import requests
 import respx
 from httpx import Response, AsyncClient
-from pep508_rs import Requirement, Version
+from pep508_rs import Requirement
 from pypi_types import pypi_metadata, pypi_releases
 from respx import MockRouter
 from zstandard import decompress, compress
 
-from resolve_prototype.common import filename_to_version, Cache, default_cache_dir
+from resolve_prototype.common import Cache, default_cache_dir
 from resolve_prototype.resolve import parse_requirement_fixup, resolve
 
 assert_all_mocked = not os.environ.get("UPDATE_SNAPSHOTS")
@@ -43,9 +44,16 @@ class DummyExecutor(Executor):
 
 
 def test_handle_filename():
-    assert filename_to_version("jedi", "jedi-0.8.0-final0.tar.gz") == "0.8.0-final0"
-    assert filename_to_version("typed-ast", "typed-ast-0.5.1.tar.gz") == "0.5.1"
-    assert filename_to_version("typed-ast", "typed_ast-0.5.1.tar.gz") == "0.5.1"
+    assert (
+        pypi_types.filename_to_version("jedi", "jedi-0.8.0-final0.tar.gz")
+        == "0.8.0-final0"
+    )
+    assert (
+        pypi_types.filename_to_version("typed-ast", "typed-ast-0.5.1.tar.gz") == "0.5.1"
+    )
+    assert (
+        pypi_types.filename_to_version("typed-ast", "typed_ast-0.5.1.tar.gz") == "0.5.1"
+    )
 
 
 def test_parse_requirement_fixup(caplog):

@@ -14,7 +14,7 @@ from resolve_prototype.resolve import Resolution, resolve, freeze
 def main():
     logging.basicConfig(level=logging.WARNING)
     logging.captureWarnings(True)
-    for i in range(10):
+    for _ in range(10):
         for requirement in sys.argv[1:]:
             root_requirement = Requirement(requirement)
             resolution: Resolution = asyncio.run(

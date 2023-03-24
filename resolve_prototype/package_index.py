@@ -6,11 +6,12 @@ from typing import Optional, List, BinaryIO, Dict
 from zipfile import ZipFile
 
 import httpx
+import pypi_types
 from httpx import AsyncClient
 from pep508_rs import Version
 from pypi_types import pypi_metadata, pypi_releases
 
-from resolve_prototype.common import user_agent, normalize, filename_to_version, Cache
+from resolve_prototype.common import user_agent, normalize, Cache
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +124,7 @@ def parse_releases_data(
         if file.yanked:
             continue
 
-        if version := filename_to_version(project, file.filename):
+        if version := pypi_types.filename_to_version(project, file.filename):
             try:
                 version = Version(version)
             except ValueError:

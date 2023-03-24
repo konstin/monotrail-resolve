@@ -16,58 +16,6 @@ def normalize(name):
     return normalizer.sub("-", name).lower()
 
 
-def filename_to_version(package_name: str, filename: str) -> Optional[str]:
-    """
-    So distribution filenames are a bit wacky: While wheels always have the same
-    structure (ends with `.whl`, five parts in the stem separated by four `-` of which
-    the second is the version), sdist have only been specified in 2020. Before that,
-    filenames may be kinda ambiguous in the sense that `tokenizer-rt-1.0-final1.tar.gz`
-    is valid as well as `tokenizer-1.0.tar.gz`. That's why we try to match the suffix
-    `.tar.gz` and the prefix by normalizing package name and the same length in the
-    filename by https://peps.python.org/pep-0503/#normalized-names and then parse the
-    version out of the middle.
-    """
-    if filename.endswith(".whl"):
-        return filename.split("-", maxsplit=2)[1]
-    # sdist
-    # Older packages (such as word2number 1.1 and pytz 2016.10) might have only .zip or
-    # .tar.bz2 sdists respectively
-    elif (
-        filename.endswith(".tar.gz")
-        or filename.endswith(".zip")
-        or filename.endswith(".tar.bz2")
-        or filename.endswith(".tgz")
-    ):
-        # https://peps.python.org/pep-0503/#normalized-names
-        package_name_normalized = normalize(package_name).lower()
-        file_prefix = normalize(filename[: len(package_name)]).lower()
-        if not package_name_normalized == file_prefix:
-            raise RuntimeError(
-                f"Name mismatch: '{package_name}' expected,"
-                f" '{filename[:len(package_name)]}' found (normalized '{package_name}'"
-                f" vs '{file_prefix}')"
-            )
-        assert filename[len(package_name)] == "-"
-        # python 3.8 does not have removesuffix :/
-        # len prefix plus one minus
-        base_name = filename[len(package_name) + 1 :]
-        archive_suffixes = [".tar.gz", ".zip", ".tar.bz2", ".tgz"]
-        for suffix in archive_suffixes:
-            base_name = base_name.replace(suffix, "")
-        return base_name
-    # These are known, but we don't use them
-    elif (
-        filename.endswith(".exe")
-        or filename.endswith(".msi")
-        or filename.endswith(".egg")
-        or filename.endswith(".rpm")
-    ):
-        return None
-    else:
-        logger.warning(f"File with unexpected name in {package_name}: {filename}")
-        return None
-
-
 class Cache:
     """Quick and simple cache abstraction that can be turned off for the tests"""
 
