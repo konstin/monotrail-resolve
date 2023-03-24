@@ -42,9 +42,6 @@ target-version = "py38"
 extend-select = [
     "B" # flake8-bugbear
 ]
-ignore = [
-    "E501"
-]
 
 [tool.black]
 skip_magic_trailing_comma = true

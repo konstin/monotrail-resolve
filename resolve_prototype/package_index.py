@@ -10,7 +10,7 @@ from httpx import AsyncClient
 from pep508_rs import Version
 from pypi_types import pypi_metadata, pypi_releases
 
-from resolve_prototype.common import user_agent, normalize, handle_filename, Cache
+from resolve_prototype.common import user_agent, normalize, filename_to_version, Cache
 
 logger = logging.getLogger(__name__)
 
@@ -35,12 +35,15 @@ class RemoteZipFile(BinaryIO):
         self.pos = 0
         self.client = client
 
+        print(url)
+
         response = self.client.head(self.url, headers={"user-agent": self.user_agent})
         response.raise_for_status()
         accept_ranges = response.headers.get("accept-ranges")
-        assert (
-            accept_ranges == "bytes"
-        ), f"The server needs to `accept-ranges: bytes`, but it says {accept_ranges}"
+        assert accept_ranges == "bytes", (
+            f"The server needs to `accept-ranges: bytes`, "
+            f"but it says {accept_ranges}"
+        )
         self.len = int(response.headers["content-length"])
 
     def seekable(self):
@@ -62,7 +65,8 @@ class RemoteZipFile(BinaryIO):
 
     def read(self, size: Optional[int] = None):
         # Here we could also use an end-open range, but we already have the information,
-        # so let's keep track locally (which we when in doubt we can trust over the server)
+        # so let's keep track locally (which we when in doubt we can trust over the
+        # server)
         if size:
             read_len = size
         else:
@@ -119,7 +123,7 @@ def parse_releases_data(
         if file.yanked:
             continue
 
-        if version := handle_filename(project, file.filename):
+        if version := filename_to_version(project, file.filename):
             try:
                 version = Version(version)
             except ValueError:
@@ -131,11 +135,10 @@ def parse_releases_data(
     if invalid_versions:
         logger.debug(f"{project} has invalid versions: {invalid_versions}")
     logger.debug(f"Ignoring files with unknown extensions: {ignored}")
+    # 10 most recent versions
+    top10 = [str(release) for release in list(releases.keys())[::-1][:10]]
     logger.info(
-        f"Found {project} with {len(releases)} releases "
-        # 10 most recent versions
-        f"{', '.join([str(release) for release in releases.keys()][::-1][:10])}"
-        ", ..."
+        f"Found {project} with {len(releases)} releases {', '.join(top10)}, ..."
     )
     return dict(releases)
 
@@ -166,12 +169,10 @@ async def get_metadata(
             f"Failed to parse metadata for {project} {version}, "
             f"this is most likely a bug"
         ) from err
-    # data = json.loads(text)
-    # return ProjectVersionJsonResponse(**data).info
 
 
 def get_metadata_from_wheel(
-    name: str, version: Version, filename: str, url: str, cache: Cache
+    name: str, version: Version, url: str, cache: Cache
 ) -> pypi_metadata.Metadata:
     metadata_path = f"{name}-{version}.dist-info/METADATA"
     start = time.time()
@@ -188,7 +189,8 @@ def get_metadata_from_wheel(
             except KeyError:
                 metadata_str = None
                 for filename in zipfile.namelist():
-                    # TODO: Check that there's actually exactly one dist info directory and METADATA file
+                    # TODO: Check that there's actually exactly one dist info directory
+                    #       and METADATA file
                     if filename.count("/") == 1 and filename.endswith(
                         ".dist-info/METADATA"
                     ):
@@ -196,13 +198,11 @@ def get_metadata_from_wheel(
                         break
                 if not metadata_str:
                     logger.warning(f"Missing METADATA file for {name} {version} {url}")
-                    # return ProjectMetadata(name=name, requires_dist=[])
                     return pypi_metadata.Metadata.from_name_and_requires_dist(name, [])
         cache.set("wheel_metadata", f"{name}@{version}.metadata", metadata_str)
     metadata = email.parser.HeaderParser().parsestr(metadata_str)
     end = time.time()
     logger.debug(f"Getting metadata took {end - start:.2f}s from {url}")
-    # return ProjectMetadata(name=name, requires_dist=metadata.get_all("Requires-Dist"))
     return pypi_metadata.Metadata.from_name_and_requires_dist(
         name, metadata.get_all("Requires-Dist")
     )

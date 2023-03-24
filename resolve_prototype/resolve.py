@@ -1,28 +1,38 @@
-"""You can imagine the following as a graph walking procedure: For each node (package) we vist, we compute the
-outgoing edges (requires_dist) from incoming edge information (version constraints and activated extras), root is the
-user input. Each node we give a new or change incoming edge by this procedure we mark for revisiting later. Given
-that we sometimes have to hold and wait for the network or worse sdist building to input-to-output translation for
-nodes we collect as many nodes as possible and then query them in parallel.
+"""You can imagine the following as a graph walking procedure: For each node (package)
+we vist, we compute the outgoing edges (requires_dist) from incoming edge information
+(version constraints and activated extras). The root is the user input. Each time we
+give a new or change an incoming edge by this procedure we mark the node for revisiting
+(breadth-first search). Given that we sometimes have to hold and wait for the network or
+worse build a sdist to know the outgoing edges of a new output translation for nodes
+we collect as many of those cases as possible and then query them in parallel.
 
-We have three kinds of information we query: * The versions (and files) that exist for each release: One query per
-release (fast) * The metadata for a specific version: One query per version (fast) * The metadata for a sdist:
-Download, unpack, install build requires and build by running potentially arbitrary code (slow)
+We have three kinds of information we query:
+* The versions (and files) that exist for each release: One query per release (fast)
+* The metadata for a specific version: One query per version (fast)
+* The metadata for a sdist: Download, unpack, install build requires and build by
+  running potentially arbitrary code (slow)
 
 The procedure is the following:
-For each package, we store the requirements and their source (incoming edges).
-Whenever we add a requirement from A to B, we add B to the queue to apply the requirement later.
+For each package, we store the requirements (outgoing edges) and their source (incoming
+edges).
+Whenever we add a requirement from A to B, we add B to the queue to apply the
+requirement later.
 For each package in the queue
 * we check if we have the list of releases. if not, add to version fetch queue and delay
-* we compute a candidate (version + extras) based on all requirements. if there is a conflict (set of available versions
-  is empty), add to conflict queue
-* we check if we have the metadata (requires_dist) for the candidate. if not, add to metadata fetch queue and delay
-* we diff with the previous candidate, update the requirements store and add packages with changed incoming requirements
-  to the queue
-* if we see and sdist, we first pretend we didn't and resolve_prototype it as a packages with no deps on its own
+* we compute a candidate (version + extras) based on all requirements. if there is a
+  conflict (set of available versions is empty), add to conflict queue
+* we check if we have the metadata (requires_dist) for the candidate. if not, add to
+  metadata fetch queue and delay
+* we diff with the previous candidate, update the requirements store and add packages
+  with changed incoming requirements (this packages new outgoing edges) to the queue
+* if we see a sdist, we first pretend we didn't and resolve_prototype it as a packages
+  with no deps on its own
 When the queue is empty:
-    * If there are versions and/or metadata to be fetched, do so
-When everything else is done, we fetch, unpack and pep517 query them for metadata in parallel, invalid them with
-`changed_metadata` and continue resolution with the new edges
+* If there are versions and/or metadata to be fetched, do so. queue all those for
+  which we now have new metadata
+When the queue is still empty:
+* fetch, unpack and PEP 517 query metadata for sdists in parallel, invalid them with
+  `changed_metadata` and queue a
 """
 
 import asyncio
@@ -119,7 +129,8 @@ class State:
     # name -> (version, extras)
     candidates: Dict[str, Tuple[Version, Set[str]]]
 
-    # Currently used to switch out the ThreadPoolExecutor we normally use with the lazy zip for a DummyExecutor
+    # Currently used to switch out the ThreadPoolExecutor we normally use with the lazy
+    # zip for a DummyExecutor
     executor: Type[Executor]
 
     def __init__(self, root_requirement: Requirement, executor: Type[Executor]):
@@ -254,8 +265,9 @@ async def resolve(
 
     while True:
         while state.queue:
-            # make sure we don't get confused when we see the same package with different spellings. we'll
-            # normalize this in before writing out with the name from metadata_cache
+            # make sure we don't get confused when we see the same package with
+            # different spellings. we'll normalize this in before writing out with the
+            # name from metadata_cache
             name = normalize(state.queue.pop(0))
             logger.debug(f"Processing {name}")
             # First time we're encountering this package?
@@ -271,8 +283,8 @@ async def resolve(
             for version in sorted(
                 state.versions_cache[name].keys(), reverse=maximum_versions
             ):
-                # TODO: proper prerelease handling (i.e. check the specifiers if they have consensus over pulling
-                #  specific prerelease ranges in)
+                # TODO: proper prerelease handling (i.e. check the specifiers if they
+                #  have consensus over pulling specific prerelease ranges in)
                 if version.any_prerelease():
                     continue
                 is_compatible = True
@@ -336,7 +348,8 @@ async def resolve(
             # Do we actually already know the requires_dist for this new candidate?
             if (name, new_version) not in state.metadata_cache:
                 logger.debug(f"Missing metadata for {name} {new_version}, delaying")
-                # If we had chosen a higher version to fetch in previous iteration, overwrite
+                # If we had chosen a higher version to fetch in previous iteration,
+                # overwrite
                 state.fetch_metadata[name] = new_version
                 continue
 
@@ -348,7 +361,7 @@ async def resolve(
                 old_requirements = set()
                 for requires_dist in old_requires_dist:
                     requirement = parse_requirement_fixup(requires_dist, None)
-                    if requirement.evaluate_extras(sorted(old_extras)):
+                    if requirement.evaluate_extras(old_extras):
                         old_requirements.add(requirement)
 
             else:
@@ -372,17 +385,18 @@ async def resolve(
             new_requirements = set()
             for requires_dist in new_requires_dist:
                 requirement = parse_requirement_fixup(requires_dist, None)
-                if requirement.evaluate_extras(sorted(new_extras)):
+                if requirement.evaluate_extras(new_extras):
                     new_requirements.add(requirement)
 
             state.candidates[name] = (new_version, new_extras)
 
-            # Remove and add edges. For (old_requirements & new_requirements) we just change the candidate in there
+            # Remove and add edges. For (old_requirements & new_requirements) we just
+            # change the candidate in there
             # and the requirement stay the same
             for old in old_requirements:
                 old_entry = (old, (name, old_version))
-                # For sdist we didn't add anything the first time because we didn't know requires_dist yet,
-                # so we can't remove that now
+                # For sdist we didn't add anything the first time because we didn't know
+                # requires_dist yet, so we can't remove that now
                 if (
                     (name, new_version) in state.changed_metadata
                     and old_entry not in state.requirements_per_package[old.name]
@@ -398,9 +412,10 @@ async def resolve(
             for changed in (old_requirements | new_requirements) - (
                 old_requirements & new_requirements
             ):
-                # For fetch_versions it's no use to requeue this here (we still don't know which version do even
-                # exist), but for fetch_metadata we might pick a different version in the next iteration and avoid
-                # fetching useless metadata
+                # For fetch_versions it's no use to requeue this here (we still don't
+                # know which version do even exist), but for fetch_metadata we might
+                # pick a different version in the next iteration and avoid fetching
+                # useless metadata
                 if (
                     changed.name not in state.queue
                     and changed.name not in state.fetch_versions
@@ -434,7 +449,8 @@ async def resolve(
         state.versions_cache.update(
             dict(zip(sorted(state.fetch_versions), projects_releases))
         )
-        # we got the info where we delayed previously, now actually compute a candidate version
+        # we got the info where we delayed previously, now actually compute a candidate
+        # version
         state.queue.extend(state.fetch_versions)
         state.fetch_versions.clear()
 
@@ -450,7 +466,8 @@ async def resolve(
                 ]
             )
         state.metadata_cache.update(dict(zip(fetch_metadata_sorted, projects_metadata)))
-        # we got the info where we delayed previously, now actually propagate those requirements
+        # we got the info where we delayed previously, now actually propagate those
+        # requirements
         state.queue.extend(state.fetch_metadata)
         state.fetch_metadata.clear()
 
@@ -460,9 +477,9 @@ async def resolve(
         if state.queue:
             continue
 
-        # Check the packages with wheels with empty requires_dist, they might not be so empty after all
-        # (name. version, filename, url)
-        query_wheels: List[Tuple[str, Version, str, str, Cache]] = []
+        # Check the packages with wheels with empty requires_dist, they might not be so
+        # empty after all (name. version, filename, url)
+        query_wheels: List[Tuple[str, Version, str, Cache]] = []
         for name, (version, _extras) in state.candidates.items():
             # Here we only want to check for those where requires_dist is empty
             if state.metadata_cache[(name, version)].requires_dist:
@@ -474,7 +491,7 @@ async def resolve(
                     and file.filename not in state.wheel_metadata_cache
                 ):
                     # TODO: Make sure it's an all-or-nothing per release here
-                    query_wheels.append((name, version, file.filename, file.url, cache))
+                    query_wheels.append((name, version, file.url, cache))
                     break
 
         # Allow to skip this step
@@ -492,9 +509,7 @@ async def resolve(
             by_candidate: Dict[
                 Tuple[str, Version], List[Tuple[str, pypi_metadata.Metadata]]
             ] = defaultdict(list)
-            for metadata, (name, version, _filename, url, _) in zip(
-                metadatas, query_wheels
-            ):
+            for metadata, (name, version, url, _) in zip(metadatas, query_wheels):
                 by_candidate[(name, version)].append((url, metadata))
             for (name, version), metadatas in by_candidate.items():
                 metadata = metadatas[0][1]
@@ -513,8 +528,9 @@ async def resolve(
                     != metadata.requires_dist
                 ):
                     logger.warning(
-                        f"Diverging metadata for {name} {version}:\n"
-                        f"pypi json api: {state.metadata_cache[(name, version)].requires_dist}\n"
+                        f"Diverging requires_dist metadata for {name} {version}:\n"
+                        f"pypi json api: "
+                        f"{state.metadata_cache[(name, version)].requires_dist or []}\n"
                         f"wheel metadata: {metadata.requires_dist}"
                     )
                     state.old_metadata[(name, version)] = state.metadata_cache[
@@ -540,12 +556,14 @@ async def resolve(
             ):
                 try:
                     [sdist] = state.versions_cache[name][version]
-                    sdists.append((name, version, sdist))
                 except ValueError:
+                    sdists = [
+                        file.filename for file in state.versions_cache[name][version]
+                    ]
                     raise RuntimeError(
-                        "Expected exactly one sdist, found "
-                        f"{[file.filename for file in state.versions_cache[name][version]]}"
+                        f"Expected exactly one sdist, found {sdists}"
                     ) from None
+                sdists.append((name, version, sdist))
 
         # This is when we know we're done, everything is resolved
         if not sdists:
@@ -555,7 +573,7 @@ async def resolve(
         logger.info(
             f"Building {[f'{name} {version}' for (name, version, _filename) in sdists]}"
         )
-        async with AsyncClient(http2=True) as client:
+        async with AsyncClient(http2=True, transport=transport) as client:
             metadatas = await asyncio.gather(
                 *[build_sdist(client, sdist[2], cache) for sdist in sdists]
             )
@@ -587,7 +605,7 @@ async def resolve(
     return Resolution([root_requirement], name_version, requirements)
 
 
-def freeze(resolution: Resolution, root_requirement: Requirement):
+def freeze(resolution: Resolution, root_requirement: Requirement) -> str:
     """Write out in the same format as `pip freeze`"""
     resolutions_ours.mkdir(exist_ok=True)
 
@@ -611,7 +629,7 @@ def freeze(resolution: Resolution, root_requirement: Requirement):
     )
     # much faster than tomlkit
     pseudo_lock_file.write_text(tomli_w.dumps(toml_data))
-    print("".join(lines))
+    return "".join(lines)
 
 
 def main():
@@ -631,7 +649,7 @@ def main():
     resolution: Resolution = asyncio.run(
         resolve(root_requirement, Cache(default_cache_dir))
     )
-    freeze(resolution, root_requirement)
+    print(freeze(resolution, root_requirement))
 
 
 if __name__ == "__main__":

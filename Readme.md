@@ -21,3 +21,15 @@ ibis-framework[all]
 # another huge ML tree 
 bio_embeddings[all]
 ```
+
+For profiling and benchmarking:
+
+```text
+python -m resolve_prototype.resolve_multiple black[d,jupyter] meine_stadt_transparent transformers[torch,sentencepiece,tokenizers,torch-speech,vision,integrations,timm,torch-vision,codecarbon,accelerate,video]
+```
+
+e.g.
+
+```text
+py-spy record -o flamegraph.svg -- python -m resolve_prototype.resolve_multiple black[d,jupyter] meine_stadt_transparent transformers[torch,sentencepiece,tokenizers,torch-speech,vision,integrations,timm,torch-vision,codecarbon,accelerate,video]
+```
