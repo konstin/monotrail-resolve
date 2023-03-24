@@ -40,6 +40,7 @@ import httpx
 import tomli_w
 from httpx import AsyncClient
 from pep508_rs import MarkerEnvironment, Requirement, Pep508Error, Version
+from pypi_types import pypi_releases, pypi_metadata
 
 from resolve_prototype.common import (
     normalize,
@@ -53,7 +54,6 @@ from resolve_prototype.package_index import (
     get_metadata_from_wheel,
 )
 from resolve_prototype.sdist import build_sdist
-from pypi_types import pypi_releases, pypi_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -146,8 +146,97 @@ class State:
 
 @dataclass
 class Resolution:
+    # The requirements given by the user
+    root: List[Requirement]
     packages: List[Tuple[str, Version]]
     requirements: Dict[Tuple[str, Version], List[Requirement]]
+
+    def for_environment(
+        self, env: MarkerEnvironment, root_extras: List[str]
+    ) -> "Resolution":
+        """Filters down the resolution to the list of packages that need to be installed
+        for the given environment.
+
+        We can assume the resolved dependencies to be a connected graph where
+        packages (resolved to one version each) are nodes and outgoing edges are the
+        requirements of each package. We now implement a breadth first search to
+        determine the subgraph if we remove all edges that do not match the current env
+        markers. This is an iterative procedure where each incoming edge comes with a
+        set of extras that may change the set of outgoing edges of a node."""
+        name_to_version = {
+            normalize(name): (name, version) for name, version in self.packages
+        }
+        # We have starting incoming edges for all root requirements
+        env_root = list(
+            filter(lambda req: req.evaluate_markers(env, root_extras), self.root)
+        )
+        # selected contains only normalized names
+        selected = {normalize(req.name) for req in env_root}
+        # name -> extras
+        # selected_extras contains only normalized keys
+        selected_extras = defaultdict(set)
+        for req in self.root:
+            selected_extras[normalize(req.name)].update(req.extras or [])
+
+        already_warned = []
+
+        # queue contains only normalized names
+        # TODO(konstin): Use a wrapper type around names so we can only compare/index
+        #   with the correct normalization
+        queue = [normalize(req.name) for req in env_root]
+        while queue:
+            current = queue.pop()
+            for req in self.requirements[name_to_version[current]]:
+                (matches, warnings) = req.evaluate_markers_and_report(
+                    env, sorted(selected_extras[current])
+                )
+                for warning in warnings:
+                    if (current, req, warning) in already_warned:
+                        continue
+                    already_warned.append((current, req, warning))
+                    # TODO: Collect those warnings during dependency resolution, but
+                    #   warn only if the version was picked. If so, check the latest
+                    #   version. If it is also invalid, prompt the user with the
+                    #   bug tracker url, repository url or another url. If not, prompt
+                    #   user to upgrade their deps
+                    logger.warning(
+                        f"Package {current} has requirement `{req}` "
+                        f"with invalid marker expression `{warning[2]}`: "
+                        f"{warning[1]}"
+                    )
+                if not matches:
+                    # Skip edges that are not relevant to the current env. Note that it
+                    # can also be the env markers would fit but we lack the extra
+                    # because the markers did not apply to an edge closer to the root
+                    # which in turn did not activate the extra
+                    continue
+                add_to_queue = False
+                if normalize(req.name) not in selected:
+                    selected.add(normalize(req.name))
+                    add_to_queue = True
+                if not set(req.extras or []) <= selected_extras[req.name]:
+                    selected_extras[normalize(req.name)].update(req.extras)
+                    add_to_queue = True
+                if add_to_queue:
+                    if req.name not in queue:
+                        queue.append(normalize(req.name))
+
+        env_packages = list(
+            filter(
+                lambda name_version: normalize(name_version[0]) in selected,
+                self.packages,
+            )
+        )
+        env_requirements = dict(
+            filter(
+                lambda name_version_reqs: normalize(name_version_reqs[0][0])
+                in selected,
+                self.requirements.items(),
+            )
+        )
+        return Resolution(
+            root=env_root, packages=env_packages, requirements=env_requirements
+        )
 
 
 async def resolve(
@@ -157,8 +246,6 @@ async def resolve(
     maximum_versions: bool = True,
     executor: Type[Executor] = ThreadPoolExecutor,
 ) -> Resolution:
-    # noinspection PyArgumentList
-    env = MarkerEnvironment.current()
     transport = httpx.AsyncHTTPTransport(retries=3)
 
     state = State(root_requirement, executor)
@@ -170,14 +257,15 @@ async def resolve(
             # make sure we don't get confused when we see the same package with different spellings. we'll
             # normalize this in before writing out with the name from metadata_cache
             name = normalize(state.queue.pop(0))
-            logger.info(f"Processing {name}")
+            logger.debug(f"Processing {name}")
             # First time we're encountering this package?
             if name not in state.versions_cache:
                 logger.debug(f"Missing versions for {name}, delaying")
                 state.fetch_versions.add(name)
                 continue
 
-            # Apply all requirements and find the highest (given `maximum_versions`) possible version
+            # Apply all requirements and find the highest (given `maximum_versions`)
+            # possible version
             new_version = None
             new_extras = None
             for version in sorted(
@@ -260,7 +348,7 @@ async def resolve(
                 old_requirements = set()
                 for requires_dist in old_requires_dist:
                     requirement = parse_requirement_fixup(requires_dist, None)
-                    if requirement.evaluate_markers(env, sorted(old_extras)):
+                    if requirement.evaluate_extras(sorted(old_extras)):
                         old_requirements.add(requirement)
 
             else:
@@ -284,7 +372,7 @@ async def resolve(
             new_requirements = set()
             for requires_dist in new_requires_dist:
                 requirement = parse_requirement_fixup(requires_dist, None)
-                if requirement.evaluate_markers(env, sorted(new_extras)):
+                if requirement.evaluate_extras(sorted(new_extras)):
                     new_requirements.add(requirement)
 
             state.candidates[name] = (new_version, new_extras)
@@ -332,8 +420,8 @@ async def resolve(
         logger.info(f"Candidates: {candidates_fmt}")
         if state.fetch_versions or state.fetch_metadata:
             logger.info(
-                f"Fetching versions for {', '.join(state.fetch_versions)} and also"
-                f" metadata for {state.fetch_metadata}"
+                f"Fetching versions for {len(state.fetch_versions)} and also"
+                f" metadata for {len(state.fetch_metadata)}"
             )
 
         async with AsyncClient(http2=True, transport=transport) as client:
@@ -496,7 +584,7 @@ async def resolve(
         ]
     name_version.sort()
 
-    return Resolution(name_version, requirements)
+    return Resolution([root_requirement], name_version, requirements)
 
 
 def freeze(resolution: Resolution, root_requirement: Requirement):
@@ -530,13 +618,12 @@ def main():
     logging.basicConfig(level=logging.INFO)
     logging.captureWarnings(True)
 
-    # root_requirement = Requirement("black[d,jupyter]")
+    root_requirement = Requirement("black[d,jupyter]")
     # root_requirement = Requirement("meine_stadt_transparent")
-    # root_requirement = Requirement("transformers[all]")
     # root_requirement = Requirement(
     #    "transformers[torch,sentencepiece,tokenizers,torch-speech,vision,integrations,timm,torch-vision,codecarbon,accelerate,video]"
     # )
-    root_requirement = Requirement("ibis-framework[all]")
+    # root_requirement = Requirement("ibis-framework[all]")
     # root_requirement = Requirement("bio_embeddings[all]")
 
     if len(sys.argv) == 2:
