@@ -6,7 +6,7 @@ from typing import Dict, Tuple
 from pep508_rs import Requirement, MarkerEnvironment, VersionSpecifier
 
 from resolve_prototype.common import Cache, default_cache_dir
-from resolve_prototype.pip_freeze import pip_resolve, pip_venv_dir, read_pip_report
+from resolve_prototype.compare.pip_freeze import pip_resolve, pip_venv_dir, read_pip_report
 from resolve_prototype.resolve import resolve, Resolution
 
 logger = logging.getLogger(__name__)
