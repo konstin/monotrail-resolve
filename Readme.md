@@ -31,5 +31,5 @@ python -m resolve_prototype.resolve_multiple black[d,jupyter] meine_stadt_transp
 e.g.
 
 ```text
-py-spy record -o flamegraph.svg -- python -m resolve_prototype.resolve_multiple black[d,jupyter] meine_stadt_transparent transformers[torch,sentencepiece,tokenizers,torch-speech,vision,integrations,timm,torch-vision,codecarbon,accelerate,video]
+py-spy record -o flamegraph.svg -- python -m resolve_prototype.resolve_multiple black[d,jupyter] meine_stadt_transparent ibis[all] transformers[torch,sentencepiece,tokenizers,torch-speech,vision,integrations,timm,torch-vision,codecarbon,accelerate,video]
 ```

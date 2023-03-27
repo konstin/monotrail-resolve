@@ -3,7 +3,7 @@ import logging
 import sys
 from typing import Dict, Tuple
 
-from pep508_rs import Requirement, MarkerEnvironment, VersionSpecifier
+from pypi_types import pep508_rs
 
 from resolve_prototype.common import Cache, default_cache_dir
 from resolve_prototype.compare.poetry_lock import (
@@ -17,10 +17,10 @@ logger = logging.getLogger(__name__)
 
 
 def compare_with_poetry(
-    root_requirement: Requirement,
+    root_requirement: pep508_rs.Requirement,
 ) -> Tuple[Dict[str, str], Dict[str, str]]:
     # noinspection PyArgumentList
-    env = MarkerEnvironment.current()
+    env = pep508_rs.MarkerEnvironment.current()
 
     if not poetry_dir(root_requirement).is_dir():
         logger.info(f"Resolving {root_requirement} with poetry")
@@ -32,7 +32,7 @@ def compare_with_poetry(
         )
         poetry_current = read_poetry_requirements_current(root_requirement)
     logger.info(f"Resolving {root_requirement} with ours")
-    requires_python = VersionSpecifier(
+    requires_python = pep508_rs.VersionSpecifier(
         f"=={sys.version_info.major}.{sys.version_info.minor}"
     )
     ours_resolution: Resolution = asyncio.run(
@@ -52,7 +52,7 @@ def compare_with_poetry(
 
 def main():
     logging.basicConfig(level=logging.INFO)
-    root_requirement = Requirement(sys.argv[1])
+    root_requirement = pep508_rs.Requirement(sys.argv[1])
     ours_resolution, poetry_current = compare_with_poetry(root_requirement)
 
     if ours_resolution == poetry_current:

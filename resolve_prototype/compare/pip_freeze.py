@@ -5,16 +5,16 @@ from pathlib import Path
 from subprocess import check_call, check_output
 from typing import Dict
 
-from pep508_rs import Requirement
+from pypi_types import pep508_rs
 
 from resolve_prototype.compare.common import resolutions_pip
 
 
-def pip_venv_dir(root_requirement: Requirement) -> Path:
+def pip_venv_dir(root_requirement: pep508_rs.Requirement) -> Path:
     return resolutions_pip.joinpath(str(root_requirement) + ".venv")
 
 
-def read_pip_report(root_requirement: Requirement) -> Dict[str, str]:
+def read_pip_report(root_requirement: pep508_rs.Requirement) -> Dict[str, str]:
     report_file = resolutions_pip.joinpath(f"{root_requirement}.json")
     report = json.loads(report_file.read_text())
     return {
@@ -22,7 +22,7 @@ def read_pip_report(root_requirement: Requirement) -> Dict[str, str]:
     }
 
 
-def pip_resolve(root_requirement: Requirement) -> Dict[str, str]:
+def pip_resolve(root_requirement: pep508_rs.Requirement) -> Dict[str, str]:
     assert "/" not in str(root_requirement)
     resolutions_pip.mkdir(exist_ok=True)
     venv_dir = pip_venv_dir(root_requirement)
@@ -48,7 +48,7 @@ def pip_resolve(root_requirement: Requirement) -> Dict[str, str]:
 
 
 def main():
-    root_requirement = Requirement(sys.argv[1])
+    root_requirement = pep508_rs.Requirement(sys.argv[1])
     resolution = pip_resolve(root_requirement)
     frozen = "".join([f"{name}=={version}\n" for name, version in resolution])
     resolutions_pip.joinpath(root_requirement.name).with_suffix(".txt").write_text(

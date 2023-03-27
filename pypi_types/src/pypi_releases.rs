@@ -41,6 +41,15 @@ impl IntoPy<PyObject> for Yanked {
     }
 }
 
+impl Yanked {
+    pub fn is_yanked(&self) -> bool {
+        match self {
+            Yanked::Bool(bool) => *bool,
+            Yanked::Reason(_) => true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 #[pyclass(dict, get_all)]
 pub struct Hashes {

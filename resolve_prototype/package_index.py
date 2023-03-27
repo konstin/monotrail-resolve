@@ -7,9 +7,7 @@ from zipfile import ZipFile
 
 import httpx
 from httpx import AsyncClient
-from pep508_rs import Version
-from pypi_types import pypi_metadata, pypi_releases
-from resolve_rs import filename_to_version
+from pypi_types import pypi_metadata, pypi_releases, pep440_rs, filename_to_version
 
 from resolve_prototype.common import user_agent, normalize, Cache
 
@@ -85,7 +83,7 @@ class RemoteZipFile(BinaryIO):
 
 async def get_releases(
     client: AsyncClient, project: str, cache: Cache
-) -> Dict[Version, List[pypi_releases.File]]:
+) -> Dict[pep440_rs.Version, List[pypi_releases.File]]:
     assert "/" not in normalize(project)
     url = (
         f"https://pypi.org/simple/{normalize(project)}/"
@@ -107,14 +105,13 @@ async def get_releases(
 
 def parse_releases_data(
     project: str, data: str
-) -> Dict[Version, List[pypi_releases.File]]:
-    data = pypi_releases.parse(data)
-    # data = PypiSimpleResponse.parse_raw(data.encode())
+) -> Dict[pep440_rs.Version, List[pypi_releases.File]]:
+    data: pypi_releases.PypiReleases = pypi_releases.parse(data)
     assert data.meta.api_version in [
         "1.0",
         "1.1",
     ], f"Unsupported api version {data.meta.api_version}"
-    releases: Dict[Version, List[pypi_releases.File]] = defaultdict(list)
+    releases: Dict[pep440_rs.Version, List[pypi_releases.File]] = defaultdict(list)
     ignored = list()
     invalid_versions = []
     for file in data.files:
@@ -124,7 +121,7 @@ def parse_releases_data(
 
         if version := filename_to_version(project, file.filename):
             try:
-                version = Version(version)
+                version = pep440_rs.Version(version)
             except ValueError:
                 invalid_versions.append(version)
                 continue
@@ -143,7 +140,7 @@ def parse_releases_data(
 
 
 async def get_metadata(
-    client: AsyncClient, project: str, version: Version, cache
+    client: AsyncClient, project: str, version: pep440_rs.Version, cache
 ) -> pypi_metadata.Metadata:
     url = f"https://pypi.org/pypi/{normalize(project)}/{version}/json"
 
@@ -171,7 +168,7 @@ async def get_metadata(
 
 
 def get_metadata_from_wheel(
-    name: str, version: Version, url: str, cache: Cache
+    name: str, version: pep440_rs.Version, url: str, cache: Cache
 ) -> pypi_metadata.Metadata:
     metadata_path = f"{name}-{version}.dist-info/METADATA"
     start = time.time()

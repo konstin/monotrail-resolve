@@ -3,20 +3,24 @@ import logging
 import sys
 from typing import Dict, Tuple
 
-from pep508_rs import Requirement, MarkerEnvironment, VersionSpecifier
+from pypi_types import pep508_rs
 
 from resolve_prototype.common import Cache, default_cache_dir
-from resolve_prototype.compare.pip_freeze import pip_resolve, pip_venv_dir, read_pip_report
+from resolve_prototype.compare.pip_freeze import (
+    pip_resolve,
+    pip_venv_dir,
+    read_pip_report,
+)
 from resolve_prototype.resolve import resolve, Resolution
 
 logger = logging.getLogger(__name__)
 
 
 def compare_with_pip(
-    root_requirement: Requirement,
+    root_requirement: pep508_rs.Requirement,
 ) -> Tuple[Dict[str, str], Dict[str, str]]:
     # noinspection PyArgumentList
-    env = MarkerEnvironment.current()
+    env = pep508_rs.MarkerEnvironment.current()
 
     if not pip_venv_dir(root_requirement).is_dir():
         logger.info(f"Resolving {root_requirement} with pip")
@@ -28,7 +32,7 @@ def compare_with_pip(
         )
         pip_resolution = read_pip_report(root_requirement)
     logger.info(f"Resolving {root_requirement} with ours")
-    requires_python = VersionSpecifier(
+    requires_python = pep508_rs.VersionSpecifier(
         f"=={sys.version_info.major}.{sys.version_info.minor}"
     )
     ours_resolution: Resolution = asyncio.run(
@@ -48,7 +52,7 @@ def compare_with_pip(
 
 def main():
     logging.basicConfig(level=logging.INFO)
-    root_requirement = Requirement(sys.argv[1])
+    root_requirement = pep508_rs.Requirement(sys.argv[1])
     ours_resolution, pip_resolution = compare_with_pip(root_requirement)
 
     if ours_resolution == pip_resolution:

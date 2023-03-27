@@ -1,8 +1,15 @@
+use crate::pypi_releases;
 use once_cell::sync::Lazy;
-use pyo3::exceptions::PyValueError;
+use pep440_rs::Version;
+use pyo3::exceptions::{PyFileNotFoundError, PyRuntimeError, PyValueError};
 use pyo3::pyfunction;
 use pyo3::PyResult;
 use regex::Regex;
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::BufReader;
+use std::path::PathBuf;
+use std::str::FromStr;
 use tracing::warn;
 
 /// Adopted from the grammar at <https://peps.python.org/pep-0508/#extras>
@@ -61,4 +68,47 @@ pub fn filename_to_version(package_name: &str, filename: &str) -> PyResult<Optio
         warn!("Filename with unexpected extension: {}", filename);
         Ok(None)
     }
+}
+
+/// Returns the releases (version -> filenames), the ignored filenames and the invalid versions
+#[pyfunction]
+#[allow(clippy::type_complexity)] // Newtype would be worse for pyo3
+pub fn parse_releases_data(
+    project: &str,
+    filename: PathBuf,
+) -> PyResult<(HashMap<Version, Vec<String>>, Vec<String>, Vec<String>)> {
+    let mut releases: HashMap<Version, Vec<String>> = HashMap::new();
+    let mut ignored_filenames: Vec<String> = Vec::new();
+    let mut invalid_versions: Vec<String> = Vec::new();
+
+    let reader = BufReader::new(
+        File::open(filename).map_err(|err| PyFileNotFoundError::new_err(err.to_string()))?,
+    );
+    let data: pypi_releases::PypiReleases =
+        serde_json::from_reader(reader).map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
+    if !["1.0", "1.1"].contains(&data.meta.api_version.as_str()) {
+        return Err(PyRuntimeError::new_err(
+            "Unsupported api version {data.meta.api_version}",
+        ));
+    }
+
+    for file in data.files {
+        if file.yanked.is_yanked() {
+            continue;
+        }
+
+        if let Some(version) = filename_to_version(project, &file.filename)? {
+            match Version::from_str(&version) {
+                Ok(version) => releases
+                    .entry(version.clone())
+                    .or_default()
+                    .push(file.filename.clone()),
+                Err(_) => invalid_versions.push(version),
+            }
+        } else {
+            ignored_filenames.push(file.filename.clone());
+        }
+    }
+
+    Ok((releases, ignored_filenames, invalid_versions))
 }
