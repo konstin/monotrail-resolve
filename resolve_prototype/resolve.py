@@ -62,9 +62,9 @@ from resolve_prototype.common import (
     normalize,
     default_cache_dir,
     Cache,
-    resolutions_ours,
     MINIMUM_SUPPORTED_PYTHON_MINOR,
 )
+from resolve_prototype.compare.common import resolutions_ours
 from resolve_prototype.package_index import (
     get_releases,
     get_metadata,
@@ -363,7 +363,7 @@ async def resolve(
                         f" {old_version} {old_extras}"
                     )
                 else:
-                    logger.info(f"Picking {name} {new_version} {new_extras}")
+                    logger.debug(f"Picking {name} {new_version} {new_extras}")
 
             # Do we actually already know the requires_dist for this new candidate?
             if (name, new_version) not in state.metadata_cache:

@@ -9,8 +9,6 @@ logger = logging.getLogger(__name__)
 user_agent = "pythonscript/0.0.1-dev1+cat <konstin@mailbox.org>"
 base_dir = Path(__file__).parent.parent
 default_cache_dir = base_dir.joinpath("cache")
-resolutions_ours = base_dir.joinpath("resolutions_ours")
-resolutions_pip = base_dir.joinpath("resolutions_pip")
 normalizer = re.compile(r"[-_.]+")
 
 

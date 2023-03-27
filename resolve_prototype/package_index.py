@@ -36,8 +36,6 @@ class RemoteZipFile(BinaryIO):
         self.pos = 0
         self.client = client
 
-        print(url)
-
         response = self.client.head(self.url, headers={"user-agent": self.user_agent})
         response.raise_for_status()
         accept_ranges = response.headers.get("accept-ranges")
@@ -138,7 +136,7 @@ def parse_releases_data(
     logger.debug(f"Ignoring files with unknown extensions: {ignored}")
     # 10 most recent versions
     top10 = [str(release) for release in list(releases.keys())[::-1][:10]]
-    logger.info(
+    logger.debug(
         f"Found {project} with {len(releases)} releases {', '.join(top10)}, ..."
     )
     return dict(releases)

@@ -7,7 +7,7 @@ from typing import Dict
 
 from pep508_rs import Requirement
 
-from resolve_prototype.common import resolutions_pip
+from resolve_prototype.compare.common import resolutions_pip
 
 
 def pip_venv_dir(root_requirement: Requirement) -> Path:
