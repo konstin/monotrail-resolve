@@ -49,7 +49,13 @@ from typing import Optional
 import httpx
 import tomli_w
 from httpx import AsyncClient
-from pep508_rs import MarkerEnvironment, Requirement, Pep508Error, Version
+from pep508_rs import (
+    MarkerEnvironment,
+    Requirement,
+    Pep508Error,
+    Version,
+    VersionSpecifier,
+)
 from pypi_types import pypi_releases, pypi_metadata
 
 from resolve_prototype.common import (
@@ -57,6 +63,7 @@ from resolve_prototype.common import (
     default_cache_dir,
     Cache,
     resolutions_ours,
+    MINIMUM_SUPPORTED_PYTHON_MINOR,
 )
 from resolve_prototype.package_index import (
     get_releases,
@@ -252,12 +259,25 @@ class Resolution:
 
 async def resolve(
     root_requirement: Requirement,
+    requires_python: VersionSpecifier,
     cache: Cache,
     download_wheels: bool = True,
     maximum_versions: bool = True,
     executor: Type[Executor] = ThreadPoolExecutor,
 ) -> Resolution:
     transport = httpx.AsyncHTTPTransport(retries=3)
+
+    # Generate list of compatible python versions for shrinking down the list of
+    # dependencies. This is done to avoid implementing PEP 440 version specifier
+    # intersections on both left hand and right hand between `requires_python` and the
+    # markers
+    python_versions = []
+    for minor in range(MINIMUM_SUPPORTED_PYTHON_MINOR, 101):
+        version = Version(f"3.{minor}")
+        if version in requires_python:
+            python_versions.append(version)
+    if Version("4.0") in requires_python:
+        python_versions.append(Version("4.0"))
 
     state = State(root_requirement, executor)
 
@@ -361,7 +381,9 @@ async def resolve(
                 old_requirements = set()
                 for requires_dist in old_requires_dist:
                     requirement = parse_requirement_fixup(requires_dist, None)
-                    if requirement.evaluate_extras(old_extras):
+                    if requirement.evaluate_extras_and_python_version(
+                        old_extras, python_versions
+                    ):
                         old_requirements.add(requirement)
 
             else:
@@ -385,7 +407,9 @@ async def resolve(
             new_requirements = set()
             for requires_dist in new_requires_dist:
                 requirement = parse_requirement_fixup(requires_dist, None)
-                if requirement.evaluate_extras(new_extras):
+                if requirement.evaluate_extras_and_python_version(
+                    new_extras, python_versions
+                ):
                     new_requirements.add(requirement)
 
             state.candidates[name] = (new_version, new_extras)
@@ -644,10 +668,12 @@ def main():
     # root_requirement = Requirement("ibis-framework[all]")
     # root_requirement = Requirement("bio_embeddings[all]")
 
+    requires_python = VersionSpecifier(">= 3.7")
+
     if len(sys.argv) == 2:
         root_requirement = Requirement(sys.argv[1])
     resolution: Resolution = asyncio.run(
-        resolve(root_requirement, Cache(default_cache_dir))
+        resolve(root_requirement, requires_python, Cache(default_cache_dir))
     )
     print(freeze(resolution, root_requirement))
 

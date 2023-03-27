@@ -12,7 +12,7 @@ import pytest
 import requests
 import respx
 from httpx import Response, AsyncClient
-from pep508_rs import Requirement
+from pep508_rs import Requirement, VersionSpecifier
 from pypi_types import pypi_metadata, pypi_releases
 from respx import MockRouter
 from zstandard import decompress, compress
@@ -206,12 +206,15 @@ class SdistMetadataMock:
 
 @pytest.mark.asyncio
 @respx.mock(assert_all_mocked=assert_all_mocked, assert_all_called=assert_all_called)
-async def test_pandas(respx_mock: MockRouter, pytestconfig: pytest.Config) -> object:
+async def test_pandas(respx_mock: MockRouter, pytestconfig: pytest.Config):
     """Simplest case, doesn't use any sdists"""
     http_mock = HttpMock(pytestconfig.rootpath, "pandas")
     http_mock.add_mocks(respx_mock)
+
+    requires_python = VersionSpecifier(">= 3.7")
     resolution = await resolve(
         Requirement("pandas"),
+        requires_python,
         Cache(default_cache_dir, read=False, write=False),
         download_wheels=False,
     )
@@ -238,8 +241,10 @@ async def test_meine_stadt_transparent(
     with patch(
         "resolve_prototype.resolve.build_sdist", sdist_metadata_mock.mock_build_sdist
     ):
+        requires_python = VersionSpecifier(">= 3.7")
         resolution = await resolve(
             Requirement("meine_stadt_transparent"),
+            ,
             Cache(default_cache_dir, read=False, write=False),
             download_wheels=False,
         )
@@ -261,7 +266,6 @@ async def test_meine_stadt_transparent(
         ("anyascii", "0.3.1"),
         ("arrow", "1.2.3"),
         ("asgiref", "3.6.0"),
-        ("backports.functools-lru-cache", "1.6.4"),
         ("backports.zoneinfo", "0.2.1"),
         ("beautifulsoup4", "4.9.3"),
         ("blessed", "1.19.1"),
@@ -271,7 +275,6 @@ async def test_meine_stadt_transparent(
         ("click", "8.1.3"),
         ("colorama", "0.4.6"),
         ("cryptography", "39.0.2"),
-        ("dataclasses", "0.8"),
         ("defusedxml", "0.7.1"),
         ("django-allauth", "0.51.0"),
         ("django-anymail", "8.6"),
@@ -306,8 +309,6 @@ async def test_meine_stadt_transparent(
         ("icalendar", "4.1.0"),
         ("idna", "3.4"),
         ("importlib-metadata", "6.0.0"),
-        ("importlib-resources", "5.12.0"),
-        ("ipaddress", "1.0.23"),
         ("itsdangerous", "2.1.2"),
         ("jinxed", "1.2.0"),
         ("joblib", "1.2.0"),
@@ -320,7 +321,6 @@ async def test_meine_stadt_transparent(
         ("numpy", "1.24.1"),
         ("oauthlib", "3.2.2"),
         ("openpyxl", "3.0.10"),
-        ("ordereddict", "1.1"),
         ("osm2geojson", "0.2.3"),
         ("psycopg2", "2.9.5"),
         ("pyahocorasick", "1.4.4"),
@@ -337,7 +337,7 @@ async def test_meine_stadt_transparent(
         ("sentry-sdk", "1.12.1"),
         ("shapely", "2.0.1"),
         ("six", "1.16.0"),
-        ("soupsieve", "1.9.6"),
+        ("soupsieve", "2.3.2.post1"),
         ("splinter", "0.17.0"),
         ("sqlparse", "0.4.3"),
         ("tablib", "3.3.0"),
@@ -364,8 +364,10 @@ async def test_matplotlib(respx_mock: MockRouter, pytestconfig: pytest.Config):
     http_mock = HttpMock(pytestconfig.rootpath, "matplotlib")
     http_mock.add_mocks(respx_mock)
     cache_dir = pytestconfig.rootpath.joinpath("test-data").joinpath("fake_cache")
+    requires_python = VersionSpecifier(">= 3.7")
     resolution = await resolve(
         Requirement("matplotlib"),
+        requires_python,
         Cache(cache_dir, read=True, write=False),
         download_wheels=True,
         executor=DummyExecutor,

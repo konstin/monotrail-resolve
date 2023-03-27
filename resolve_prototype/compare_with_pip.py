@@ -3,7 +3,7 @@ import logging
 import sys
 from typing import Dict, Tuple
 
-from pep508_rs import Requirement, MarkerEnvironment
+from pep508_rs import Requirement, MarkerEnvironment, VersionSpecifier
 
 from resolve_prototype.common import Cache, default_cache_dir
 from resolve_prototype.pip_freeze import pip_resolve, pip_venv_dir, read_pip_report
@@ -28,8 +28,11 @@ def compare_with_pip(
         )
         pip_resolution = read_pip_report(root_requirement)
     logger.info(f"Resolving {root_requirement} with ours")
+    requires_python = VersionSpecifier(
+        f"=={sys.version_info.major}.{sys.version_info.minor}"
+    )
     ours_resolution: Resolution = asyncio.run(
-        resolve(root_requirement, Cache(default_cache_dir))
+        resolve(root_requirement, requires_python, Cache(default_cache_dir))
     )
     ours_resolution_env: Resolution = ours_resolution.for_environment(env, [])
     pip_resolution = {
