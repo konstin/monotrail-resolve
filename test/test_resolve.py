@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import httpx
 import orjson
-import pypi_types
+from resolve_rs import filename_to_version
 import pytest
 import requests
 import respx
@@ -45,14 +45,14 @@ class DummyExecutor(Executor):
 
 def test_handle_filename():
     assert (
-        pypi_types.filename_to_version("jedi", "jedi-0.8.0-final0.tar.gz")
+        filename_to_version("jedi", "jedi-0.8.0-final0.tar.gz")
         == "0.8.0-final0"
     )
     assert (
-        pypi_types.filename_to_version("typed-ast", "typed-ast-0.5.1.tar.gz") == "0.5.1"
+        filename_to_version("typed-ast", "typed-ast-0.5.1.tar.gz") == "0.5.1"
     )
     assert (
-        pypi_types.filename_to_version("typed-ast", "typed_ast-0.5.1.tar.gz") == "0.5.1"
+        filename_to_version("typed-ast", "typed_ast-0.5.1.tar.gz") == "0.5.1"
     )
 
 
@@ -244,7 +244,7 @@ async def test_meine_stadt_transparent(
         requires_python = VersionSpecifier(">= 3.7")
         resolution = await resolve(
             Requirement("meine_stadt_transparent"),
-            ,
+            requires_python,
             Cache(default_cache_dir, read=False, write=False),
             download_wheels=False,
         )

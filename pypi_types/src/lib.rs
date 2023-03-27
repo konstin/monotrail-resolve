@@ -1,10 +1,8 @@
-use helper::filename_to_version;
 use pyo3::types::PyModule;
-use pyo3::{pyclass, pymodule, wrap_pyfunction, PyResult, Python};
+use pyo3::{pyclass, pymodule, PyResult, Python};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-mod helper;
 mod pypi_metadata;
 mod pypi_releases;
 
@@ -24,8 +22,6 @@ pub fn pypi_types(py: Python, module: &PyModule) -> PyResult<()> {
     let pypi_releases_module = PyModule::new(py, "pypi_releases")?;
     pypi_releases::pypi_releases(py, pypi_releases_module)?;
     module.add_submodule(pypi_releases_module)?;
-
-    module.add_function(wrap_pyfunction!(filename_to_version, py)?)?;
 
     Ok(())
 }
