@@ -1,4 +1,6 @@
 import logging
+import os
+import random
 import re
 from pathlib import Path
 from typing import Optional
@@ -47,4 +49,9 @@ class Cache:
             return False
         filename = self.filename(bucket, name)
         filename.parent.mkdir(exist_ok=True, parents=True)
-        filename.write_text(content)
+        # tempfile to avoid broken cache entry
+        characters = "abcdefghijklmnopqrstuvwxyz0123456789_"
+        temp_name = "".join(random.choices(characters, k=8))
+        temp_file = filename.parent.joinpath(temp_name)
+        temp_file.write_text(content)
+        os.replace(temp_file, filename)
