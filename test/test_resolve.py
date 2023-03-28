@@ -11,16 +11,12 @@ import pytest
 import requests
 import respx
 from httpx import Response, AsyncClient
-from pypi_types import (
-    pypi_metadata,
-    pypi_releases,
-    pep440_rs,
-    pep508_rs,
-    filename_to_version,
-)
 from respx import MockRouter
 from zstandard import decompress, compress
 
+from pypi_types import pypi_metadata, pypi_releases, filename_to_version
+from pypi_types.pep440_rs import VersionSpecifier
+from pypi_types.pep508_rs import Requirement
 from resolve_prototype.common import Cache, default_cache_dir
 from resolve_prototype.resolve import parse_requirement_fixup, resolve
 
@@ -40,6 +36,7 @@ class DummyExecutor(Executor):
     def __exit__(self, exc_type, exc_value, exc_traceback):
         pass
 
+    # noinspection PyArgumentList
     def submit(self, fn, *args, **kwargs):
         return fn(*args, **kwargs)
 
@@ -208,9 +205,9 @@ async def test_pandas(respx_mock: MockRouter, pytestconfig: pytest.Config):
     http_mock = HttpMock(pytestconfig.rootpath, "pandas")
     http_mock.add_mocks(respx_mock)
 
-    requires_python = pep440_rs.VersionSpecifier(">= 3.7")
+    requires_python = VersionSpecifier(">= 3.7")
     resolution = await resolve(
-        pep508_rs.Requirement("pandas"),
+        Requirement("pandas"),
         requires_python,
         Cache(default_cache_dir, read=False, write=False),
         download_wheels=False,
@@ -238,9 +235,9 @@ async def test_meine_stadt_transparent(
     with patch(
         "resolve_prototype.resolve.build_sdist", sdist_metadata_mock.mock_build_sdist
     ):
-        requires_python = pep440_rs.VersionSpecifier(">= 3.7")
+        requires_python = VersionSpecifier(">= 3.7")
         resolution = await resolve(
-            pep508_rs.Requirement("meine_stadt_transparent"),
+            Requirement("meine_stadt_transparent"),
             requires_python,
             Cache(default_cache_dir, read=False, write=False),
             download_wheels=False,
@@ -361,9 +358,9 @@ async def test_matplotlib(respx_mock: MockRouter, pytestconfig: pytest.Config):
     http_mock = HttpMock(pytestconfig.rootpath, "matplotlib")
     http_mock.add_mocks(respx_mock)
     cache_dir = pytestconfig.rootpath.joinpath("test-data").joinpath("fake_cache")
-    requires_python = pep440_rs.VersionSpecifier(">= 3.7")
+    requires_python = VersionSpecifier(">= 3.7")
     resolution = await resolve(
-        pep508_rs.Requirement("matplotlib"),
+        Requirement("matplotlib"),
         requires_python,
         Cache(cache_dir, read=True, write=False),
         download_wheels=True,

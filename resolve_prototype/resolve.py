@@ -49,8 +49,10 @@ from typing import Optional
 import httpx
 import tomli_w
 from httpx import AsyncClient
-from pypi_types import pypi_releases, pypi_metadata, pep440_rs, pep508_rs
 
+from pypi_types import pypi_releases, pypi_metadata
+from pypi_types.pep440_rs import Version, VersionSpecifier
+from pypi_types.pep508_rs import Pep508Error, Requirement, MarkerEnvironment
 from resolve_prototype.common import (
     normalize,
     default_cache_dir,
@@ -70,7 +72,7 @@ logger = logging.getLogger(__name__)
 
 def parse_requirement_fixup(
     requirement: str, debug_source: Optional[str]
-) -> pep508_rs.Requirement:
+) -> Requirement:
     """Fix unfortunately popular errors such as `elasticsearch-dsl (>=7.2.0<8.0.0)` in
     django-elasticsearch-dsl 7.2.2 with a regex heuristic
 
@@ -78,11 +80,11 @@ def parse_requirement_fixup(
     caching once and then warn
     """
     try:
-        return pep508_rs.Requirement(requirement)
-    except pep508_rs.Pep508Error:
+        return Requirement(requirement)
+    except Pep508Error:
         try:
             # Add the missing comma
-            requirement_parsed = pep508_rs.Requirement(
+            requirement_parsed = Requirement(
                 re.sub(r"(\d)([<>=~^!])", r"\1,\2", requirement)
             )
             if debug_source:
@@ -91,15 +93,15 @@ def parse_requirement_fixup(
                     " (missing comma)"
                 )
             return requirement_parsed
-        except pep440_rs.Pep508Error:
+        except Pep508Error:
             pass
         # Didn't work with the fixup either? raise the error with the original string
         raise
 
 
 class State:
-    root_requirement: pep508_rs.Requirement
-    user_constraints: Dict[str, List[pep508_rs.Requirement]]
+    root_requirement: Requirement
+    user_constraints: Dict[str, List[Requirement]]
 
     # The list of packages which we need to reevaluate
     queue: List[str]
@@ -108,36 +110,32 @@ class State:
     # The idea of a dict is that we can query a version to fetch, but if something
     # further back in the queue requires a different version constraint it gets updated
     # before fetching the now useless version
-    fetch_metadata: Dict[str, pep440_rs.Version]
+    fetch_metadata: Dict[str, Version]
     # remember which sdist we did already process
-    resolved_sdists: Set[Tuple[str, pep440_rs.Version]]
+    resolved_sdists: Set[Tuple[str, Version]]
 
     # package name -> list of versions and the files (sdist and wheel only) from pypi
-    versions_cache: Dict[str, Dict[pep440_rs.Version, List[pypi_releases.File]]]
+    versions_cache: Dict[str, Dict[Version, List[pypi_releases.File]]]
     # (package name, package version) -> Python core metadata (or at least the part
     # we currently use of it)
-    metadata_cache: Dict[Tuple[str, pep440_rs.Version], pypi_metadata.Metadata]
+    metadata_cache: Dict[Tuple[str, Version], pypi_metadata.Metadata]
     # For sdists, we pick a candidates before we have the correct requires_dist, so we
     # have to force an update without candidate change when we have an update
-    changed_metadata: Set[Tuple[str, pep440_rs.Version]]
+    changed_metadata: Set[Tuple[str, Version]]
     # We need to remove the old edges, so we need to remember the wrong metadata
-    old_metadata: Dict[Tuple[str, pep440_rs.Version], pypi_metadata.Metadata]
+    old_metadata: Dict[Tuple[str, Version], pypi_metadata.Metadata]
     # We query wheel metadata through range requests and save it here
     wheel_metadata_cache: Dict[str, pypi_metadata.Metadata]
 
-    requirements_per_package: Dict[
-        str, Set[Tuple[pep508_rs.Requirement, Tuple[str, pep440_rs.Version]]]
-    ]
+    requirements_per_package: Dict[str, Set[Tuple[Requirement, Tuple[str, Version]]]]
     # name -> (version, extras)
-    candidates: Dict[str, Tuple[pep440_rs.Version, Set[str]]]
+    candidates: Dict[str, Tuple[Version, Set[str]]]
 
     # Currently used to switch out the ThreadPoolExecutor we normally use with the lazy
     # zip for a DummyExecutor
     executor: Type[Executor]
 
-    def __init__(
-        self, root_requirement: pep508_rs.Requirement, executor: Type[Executor]
-    ):
+    def __init__(self, root_requirement: Requirement, executor: Type[Executor]):
         self.old_metadata = {}
         self.root_requirement = root_requirement
         self.user_constraints = {normalize(root_requirement.name): [root_requirement]}
@@ -155,19 +153,19 @@ class State:
 
         for name, [requirement] in self.user_constraints.items():
             self.requirements_per_package[name] = {
-                (requirement, ("(user specified)", pep440_rs.Version("0")))
+                (requirement, ("(user specified)", Version("0")))
             }
 
 
 @dataclass
 class Resolution:
     # The requirements given by the user
-    root: List[pep508_rs.Requirement]
-    packages: List[Tuple[str, pep440_rs.Version]]
-    requirements: Dict[Tuple[str, pep440_rs.Version], List[pep508_rs.Requirement]]
+    root: List[Requirement]
+    packages: List[Tuple[str, Version]]
+    requirements: Dict[Tuple[str, Version], List[Requirement]]
 
     def for_environment(
-        self, env: pep508_rs.MarkerEnvironment, root_extras: List[str]
+        self, env: MarkerEnvironment, root_extras: List[str]
     ) -> "Resolution":
         """Filters down the resolution to the list of packages that need to be installed
         for the given environment.
@@ -255,8 +253,8 @@ class Resolution:
 
 
 async def resolve(
-    root_requirement: pep508_rs.Requirement,
-    requires_python: pep440_rs.VersionSpecifier,
+    root_requirement: Requirement,
+    requires_python: VersionSpecifier,
     cache: Cache,
     download_wheels: bool = True,
     maximum_versions: bool = True,
@@ -270,11 +268,11 @@ async def resolve(
     # markers
     python_versions = []
     for minor in range(MINIMUM_SUPPORTED_PYTHON_MINOR, 101):
-        version = pep440_rs.Version(f"3.{minor}")
+        version = Version(f"3.{minor}")
         if version in requires_python:
             python_versions.append(version)
-    if pep440_rs.Version("4.0") in requires_python:
-        python_versions.append(pep440_rs.Version("4.0"))
+    if Version("4.0") in requires_python:
+        python_versions.append(Version("4.0"))
 
     state = State(root_requirement, executor)
 
@@ -323,7 +321,7 @@ async def resolve(
                                 parse_requirement_fixup(
                                     requirement, f"{name} {version}"
                                 )
-                            except pep440_rs.Pep508Error:
+                            except Pep508Error:
                                 # Yep this even happens surprisingly often
                                 logger.warning(
                                     f"Ignoring {name} {version} due to invalid"
@@ -476,7 +474,7 @@ async def resolve(
         state.fetch_versions.clear()
 
         # noinspection PyTypeChecker
-        fetch_metadata_sorted: List[Tuple[str, pep440_rs.Version]] = sorted(
+        fetch_metadata_sorted: List[Tuple[str, Version]] = sorted(
             state.fetch_metadata.items()
         )
         async with AsyncClient(http2=True, transport=transport) as client:
@@ -500,7 +498,7 @@ async def resolve(
 
         # Check the packages with wheels with empty requires_dist, they might not be so
         # empty after all (name. version, filename, url)
-        query_wheels: List[Tuple[str, pep440_rs.Version, str, Cache]] = []
+        query_wheels: List[Tuple[str, Version, str, Cache]] = []
         for name, (version, _extras) in state.candidates.items():
             # Here we only want to check for those where requires_dist is empty
             if state.metadata_cache[(name, version)].requires_dist:
@@ -528,7 +526,7 @@ async def resolve(
             with ThreadPoolExecutor() as executor:
                 metadatas = executor.map(get_metadata_from_wheel, *zip(*query_wheels))
             by_candidate: Dict[
-                Tuple[str, pep440_rs.Version], List[Tuple[str, pypi_metadata.Metadata]]
+                Tuple[str, Version], List[Tuple[str, pypi_metadata.Metadata]]
             ] = defaultdict(list)
             for metadata, (name, version, url, _) in zip(metadatas, query_wheels):
                 by_candidate[(name, version)].append((url, metadata))
@@ -567,7 +565,7 @@ async def resolve(
             continue
 
         # Do we have sdist for which we don't know the metadata yet?
-        sdists: List[Tuple[str, pep440_rs.Version, pypi_releases.File]] = []
+        sdists: List[Tuple[str, Version, pypi_releases.File]] = []
         for name, (version, _extras) in state.candidates.items():
             if (name, version) in state.resolved_sdists:
                 continue
@@ -578,11 +576,11 @@ async def resolve(
                 try:
                     [sdist] = state.versions_cache[name][version]
                 except ValueError:
-                    sdists = [
+                    sdist_list = [
                         file.filename for file in state.versions_cache[name][version]
                     ]
                     raise RuntimeError(
-                        f"Expected exactly one sdist, found {sdists}"
+                        f"Expected exactly one sdist, found {sdist_list}"
                     ) from None
                 sdists.append((name, version, sdist))
 
@@ -626,7 +624,7 @@ async def resolve(
     return Resolution([root_requirement], name_version, requirements)
 
 
-def freeze(resolution: Resolution, root_requirement: pep508_rs.Requirement) -> str:
+def freeze(resolution: Resolution, root_requirement: Requirement) -> str:
     """Write out in the same format as `pip freeze`"""
     resolutions_ours.mkdir(exist_ok=True)
 
@@ -657,7 +655,7 @@ def main():
     logging.basicConfig(level=logging.INFO)
     logging.captureWarnings(True)
 
-    root_requirement = pep508_rs.Requirement("black[d,jupyter]")
+    root_requirement = Requirement("black[d,jupyter]")
     # root_requirement = Requirement("meine_stadt_transparent")
     # root_requirement = Requirement(
     #    "transformers[torch,sentencepiece,tokenizers,torch-speech,vision,integrations,timm,torch-vision,codecarbon,accelerate,video]"
@@ -665,10 +663,10 @@ def main():
     # root_requirement = Requirement("ibis-framework[all]")
     # root_requirement = Requirement("bio_embeddings[all]")
 
-    requires_python = pep440_rs.VersionSpecifier(">= 3.7")
+    requires_python = VersionSpecifier(">= 3.7")
 
     if len(sys.argv) == 2:
-        root_requirement = pep508_rs.Requirement(sys.argv[1])
+        root_requirement = Requirement(sys.argv[1])
     resolution: Resolution = asyncio.run(
         resolve(root_requirement, requires_python, Cache(default_cache_dir))
     )

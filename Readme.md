@@ -24,12 +24,18 @@ bio_embeddings[all]
 
 For profiling and benchmarking:
 
-```text
+```shell
 python -m resolve_prototype.resolve_multiple black[d,jupyter] meine_stadt_transparent transformers[torch,sentencepiece,tokenizers,torch-speech,vision,integrations,timm,torch-vision,codecarbon,accelerate,video]
 ```
 
 e.g.
 
-```text
+```shell
 py-spy record -o flamegraph.svg -- python -m resolve_prototype.resolve_multiple black[d,jupyter] meine_stadt_transparent ibis[all] transformers[torch,sentencepiece,tokenizers,torch-speech,vision,integrations,timm,torch-vision,codecarbon,accelerate,video]
+```
+
+or 
+
+```shell
+hyperfine "python -m resolve_prototype.resolve_multiple black[d,jupyter] meine_stadt_transparent transformers[torch,sentencepiece,tokenizers,torch-speech,vision,integrations,timm,torch-vision,codecarbon,accelerate,video]"
 ```

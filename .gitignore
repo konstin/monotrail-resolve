@@ -1,3 +1,4 @@
+*.so
 .cargo
 .venv*
 __pycache__
