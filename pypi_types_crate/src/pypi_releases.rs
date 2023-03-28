@@ -1,5 +1,9 @@
+use pyo3::basic::CompareOp;
+use pyo3::exceptions::PyNotImplementedError;
 use pyo3::types::PyModule;
-use pyo3::{pyclass, pyfunction, pymodule, wrap_pyfunction, IntoPy, PyObject, PyResult, Python};
+use pyo3::{
+    pyclass, pyfunction, pymethods, pymodule, wrap_pyfunction, IntoPy, PyObject, PyResult, Python,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
@@ -23,6 +27,29 @@ pub struct File {
     pub url: String,
     // TODO: This either a bool (false) or a string with the reason
     pub yanked: Yanked,
+}
+
+#[pymethods]
+impl File {
+    fn __richcmp__(&self, other: &Self, op: CompareOp) -> PyResult<bool> {
+        if matches!(op, CompareOp::Eq) {
+            Ok(self == other)
+        } else if matches!(op, CompareOp::Ne) {
+            Ok(self != other)
+        } else {
+            Err(PyNotImplementedError::new_err(
+                "Can only compare File by equality",
+            ))
+        }
+    }
+
+    fn __str__(&self) -> String {
+        self.filename.clone()
+    }
+
+    fn __repr__(&self) -> String {
+        self.filename.clone()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]

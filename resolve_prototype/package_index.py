@@ -7,8 +7,8 @@ from zipfile import ZipFile
 
 import httpx
 from httpx import AsyncClient
-from pypi_types import pypi_metadata, pypi_releases, pep440_rs, filename_to_version
 
+from pypi_types import pypi_metadata, pypi_releases, pep440_rs, filename_to_version
 from resolve_prototype.common import user_agent, normalize, Cache
 
 logger = logging.getLogger(__name__)
