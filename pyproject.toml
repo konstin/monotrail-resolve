@@ -41,7 +41,7 @@ addopts = "--tb=short"
 [tool.ruff]
 target-version = "py38"
 extend-select = [
-    "B" # flake8-bugbear
+    "B", # flake8-bugbear
 ]
 
 [tool.black]
