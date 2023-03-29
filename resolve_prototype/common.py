@@ -8,7 +8,7 @@ from typing import Optional
 MINIMUM_SUPPORTED_PYTHON_MINOR = 7
 
 logger = logging.getLogger(__name__)
-user_agent = "pythonscript/0.0.1-dev1+cat <konstin@mailbox.org>"
+user_agent = "monotrail-resolve-prototype/0.0.1-dev1+cat <konstin@mailbox.org>"
 base_dir = Path(__file__).parent.parent
 default_cache_dir = base_dir.joinpath("cache")
 normalizer = re.compile(r"[-_.]+")

@@ -82,7 +82,7 @@ class RemoteZipFile(BinaryIO):
 
 
 async def get_releases(
-    client: AsyncClient, project: str, cache: Cache
+    client: AsyncClient, project: str, cache: Cache, refresh: bool = False
 ) -> Dict[pep440_rs.Version, List[pypi_releases.File]]:
     assert "/" not in normalize(project)
     url = (
@@ -90,17 +90,34 @@ async def get_releases(
         + "?format=application/vnd.pypi.simple.v1+json"
     )
 
+    # normalize removes all dots in the name
     cached = cache.get("pypi_simple_releases", normalize(project) + ".json")
-    if cached:
-        logger.debug(f"Using cached releases for {url}")
+    if cached and not refresh:
+        logger.info(f"Using cached releases for {url}")
         return parse_releases_data(project, cached)
 
-    logger.debug(f"Querying releases from {url}")
-    response = await client.get(url, headers={"user-agent": user_agent})
-    response.raise_for_status()
-    data = response.text
-    cache.set("pypi_simple_releases", normalize(project) + ".json", data)
-    return parse_releases_data(project, data)
+    etag = cache.get("pypi_simple_releases", normalize(project) + ".etag")
+    logger.info(f"Querying releases from {url}")
+    if etag:
+        headers = {"user-agent": user_agent, "If-None-Match": etag.strip()}
+    else:
+        headers = {"user-agent": user_agent}
+
+    response = await client.get(url, headers=headers)
+    if response.status_code == 200:
+        logger.info(f"New response for {url}")
+        data = response.text
+        cache.set("pypi_simple_releases", normalize(project) + ".json", data)
+        if etag := response.headers.get("etag"):
+            cache.set("pypi_simple_releases", normalize(project) + ".etag", etag)
+        return parse_releases_data(project, data)
+    elif response.status_code == 304:
+        assert cached
+        logger.info(f"Not modified, using cached for {url}")
+        return parse_releases_data(project, cached)
+    else:
+        response.raise_for_status()
+        raise RuntimeError(f"Unexpected status: {response.status_code}")
 
 
 def parse_releases_data(
