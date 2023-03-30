@@ -3,7 +3,7 @@ import os
 import random
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Optional, NewType
 
 MINIMUM_SUPPORTED_PYTHON_MINOR = 7
 
@@ -14,8 +14,11 @@ default_cache_dir = base_dir.joinpath("cache")
 normalizer = re.compile(r"[-_.]+")
 
 
-def normalize(name):
-    return normalizer.sub("-", name).lower()
+NormalizedName = NewType("NormalizedName", str)
+
+
+def normalize(name: str) -> NormalizedName:
+    return NormalizedName(normalizer.sub("-", name).lower())
 
 
 class Cache:

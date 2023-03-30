@@ -9,7 +9,7 @@ import httpx
 from httpx import AsyncClient
 
 from pypi_types import pypi_metadata, pypi_releases, pep440_rs, filename_to_version
-from resolve_prototype.common import user_agent, normalize, Cache
+from resolve_prototype.common import user_agent, normalize, Cache, NormalizedName
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,7 @@ async def get_releases(
         return parse_releases_data(project, cached)
 
     etag = cache.get("pypi_simple_releases", normalize(project) + ".etag")
-    logger.info(f"Querying releases from {url}")
+    logger.debug(f"Querying releases from {url}")
     if etag:
         headers = {"user-agent": user_agent, "If-None-Match": etag.strip()}
     else:
@@ -105,7 +105,7 @@ async def get_releases(
 
     response = await client.get(url, headers=headers)
     if response.status_code == 200:
-        logger.info(f"New response for {url}")
+        logger.debug(f"New response for {url}")
         data = response.text
         cache.set("pypi_simple_releases", normalize(project) + ".json", data)
         if etag := response.headers.get("etag"):
@@ -113,7 +113,7 @@ async def get_releases(
         return parse_releases_data(project, data)
     elif response.status_code == 304:
         assert cached
-        logger.info(f"Not modified, using cached for {url}")
+        logger.debug(f"Not modified, using cached for {url}")
         return parse_releases_data(project, cached)
     else:
         response.raise_for_status()
@@ -185,7 +185,7 @@ async def get_metadata(
 
 
 def get_metadata_from_wheel(
-    name: str, version: pep440_rs.Version, url: str, cache: Cache
+    name: NormalizedName, version: pep440_rs.Version, url: str, cache: Cache
 ) -> pypi_metadata.Metadata:
     metadata_path = f"{name}-{version}.dist-info/METADATA"
     start = time.time()

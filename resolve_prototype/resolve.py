@@ -58,6 +58,7 @@ from resolve_prototype.common import (
     default_cache_dir,
     Cache,
     MINIMUM_SUPPORTED_PYTHON_MINOR,
+    NormalizedName,
 )
 from resolve_prototype.compare.common import resolutions_ours
 from resolve_prototype.package_index import (
@@ -101,18 +102,18 @@ def parse_requirement_fixup(
 
 class State:
     root_requirement: Requirement
-    user_constraints: Dict[str, List[Requirement]]
+    user_constraints: Dict[NormalizedName, List[Requirement]]
 
     # The list of packages which we need to reevaluate
-    queue: List[str]
+    queue: List[NormalizedName]
     # Process after fetching additional information
-    fetch_versions: Set[str]
+    fetch_versions: Set[NormalizedName]
     # The idea of a dict is that we can query a version to fetch, but if something
     # further back in the queue requires a different version constraint it gets updated
     # before fetching the now useless version
-    fetch_metadata: Dict[str, Version]
+    fetch_metadata: Dict[NormalizedName, Version]
     # remember which sdist we did already process
-    resolved_sdists: Set[Tuple[str, Version]]
+    resolved_sdists: Set[Tuple[NormalizedName, Version]]
 
     # package name -> list of versions and the files (sdist and wheel only) from pypi
     versions_cache: Dict[str, Dict[Version, List[pypi_releases.File]]]
@@ -121,15 +122,17 @@ class State:
     metadata_cache: Dict[Tuple[str, Version], pypi_metadata.Metadata]
     # For sdists, we pick a candidates before we have the correct requires_dist, so we
     # have to force an update without candidate change when we have an update
-    changed_metadata: Set[Tuple[str, Version]]
+    changed_metadata: Set[Tuple[NormalizedName, Version]]
     # We need to remove the old edges, so we need to remember the wrong metadata
-    old_metadata: Dict[Tuple[str, Version], pypi_metadata.Metadata]
+    old_metadata: Dict[Tuple[NormalizedName, Version], pypi_metadata.Metadata]
     # We query wheel metadata through range requests and save it here
     wheel_metadata_cache: Dict[str, pypi_metadata.Metadata]
 
-    requirements_per_package: Dict[str, Set[Tuple[Requirement, Tuple[str, Version]]]]
+    requirements_per_package: Dict[
+        NormalizedName, Set[Tuple[Requirement, Tuple[NormalizedName, Version]]]
+    ]
     # name -> (version, extras)
-    candidates: Dict[str, Tuple[Version, Set[str]]]
+    candidates: Dict[NormalizedName, Tuple[Version, Set[str]]]
 
     # Currently used to switch out the ThreadPoolExecutor we normally use with the lazy
     # zip for a DummyExecutor
@@ -139,7 +142,7 @@ class State:
         self.old_metadata = {}
         self.root_requirement = root_requirement
         self.user_constraints = {normalize(root_requirement.name): [root_requirement]}
-        self.queue: List[str] = [root_requirement.name]
+        self.queue = [normalize(root_requirement.name)]
         self.fetch_versions = set()
         self.fetch_metadata = {}
         self.resolved_sdists = set()
@@ -152,17 +155,32 @@ class State:
         self.executor = executor
 
         for name, [requirement] in self.user_constraints.items():
+            # somehow it doesn't get the list unstructuring
+            # noinspection PyTypeChecker
             self.requirements_per_package[name] = {
                 (requirement, ("(user specified)", Version("0")))
             }
 
 
 @dataclass
+class ReleaseData:
+    # We use this when e.g. comparing with pip. I'm not entirely sure yet what this
+    # name is and who defines it but it's easier to already track something here.
+    # E.g. "Django" vs. "django
+    unnormalized_name: str
+    # The requirements read from the wheel or the PEP 517 api with fixups
+    requirements: List[Requirement]
+    # Metadata read from the wheel or the PEP 517 api
+    metadata: pypi_metadata.Metadata
+    # The list of files for this release
+    files: List[pypi_releases.File]
+
+
+@dataclass
 class Resolution:
     # The requirements given by the user
     root: List[Requirement]
-    packages: List[Tuple[str, Version]]
-    requirements: Dict[Tuple[str, Version], List[Requirement]]
+    package_data: Dict[Tuple[NormalizedName, Version], ReleaseData]
 
     def for_environment(
         self, env: MarkerEnvironment, root_extras: List[str]
@@ -176,18 +194,15 @@ class Resolution:
         determine the subgraph if we remove all edges that do not match the current env
         markers. This is an iterative procedure where each incoming edge comes with a
         set of extras that may change the set of outgoing edges of a node."""
-        name_to_version = {
-            normalize(name): (name, version) for name, version in self.packages
-        }
+        name_to_version = {name: (name, version) for name, version in self.package_data}
         # We have starting incoming edges for all root requirements
         env_root = list(
             filter(lambda req: req.evaluate_markers(env, root_extras), self.root)
         )
-        # selected contains only normalized names
-        selected = {normalize(req.name) for req in env_root}
+        selected: Set[NormalizedName] = {normalize(req.name) for req in env_root}
         # name -> extras
         # selected_extras contains only normalized keys
-        selected_extras = defaultdict(set)
+        selected_extras: Dict[NormalizedName, Set[str]] = defaultdict(set)
         for req in self.root:
             selected_extras[normalize(req.name)].update(req.extras or [])
 
@@ -199,7 +214,7 @@ class Resolution:
         queue = [normalize(req.name) for req in env_root]
         while queue:
             current = queue.pop()
-            for req in self.requirements[name_to_version[current]]:
+            for req in self.package_data[name_to_version[current]].requirements:
                 (matches, warnings) = req.evaluate_markers_and_report(
                     env, sorted(selected_extras[current])
                 )
@@ -234,22 +249,12 @@ class Resolution:
                     if req.name not in queue:
                         queue.append(normalize(req.name))
 
-        env_packages = list(
-            filter(
-                lambda name_version: normalize(name_version[0]) in selected,
-                self.packages,
-            )
-        )
-        env_requirements = dict(
-            filter(
-                lambda name_version_reqs: normalize(name_version_reqs[0][0])
-                in selected,
-                self.requirements.items(),
-            )
-        )
-        return Resolution(
-            root=env_root, packages=env_packages, requirements=env_requirements
-        )
+        env_package_data = {}
+        for (name, version), package_data in self.package_data.items():
+            if name in selected:
+                env_package_data[(name, version)] = package_data
+
+        return Resolution(root=env_root, package_data=env_package_data)
 
 
 async def resolve(
@@ -280,10 +285,7 @@ async def resolve(
 
     while True:
         while state.queue:
-            # make sure we don't get confused when we see the same package with
-            # different spellings. we'll normalize this in before writing out with the
-            # name from metadata_cache
-            name = normalize(state.queue.pop(0))
+            name = state.queue.pop(0)
             logger.debug(f"Processing {name}")
             # First time we're encountering this package?
             if name not in state.versions_cache:
@@ -440,7 +442,7 @@ async def resolve(
                     and changed.name not in state.fetch_versions
                 ):
                     logger.debug(f"Queuing {changed.name}")
-                    state.queue.append(changed.name)
+                    state.queue.append(normalize(changed.name))
 
             if (name, new_version) in state.changed_metadata:
                 state.changed_metadata.remove((name, new_version))
@@ -526,7 +528,7 @@ async def resolve(
             with ThreadPoolExecutor() as executor:
                 metadatas = executor.map(get_metadata_from_wheel, *zip(*query_wheels))
             by_candidate: Dict[
-                Tuple[str, Version], List[Tuple[str, pypi_metadata.Metadata]]
+                Tuple[NormalizedName, Version], List[Tuple[str, pypi_metadata.Metadata]]
             ] = defaultdict(list)
             for metadata, (name, version, url, _) in zip(metadatas, query_wheels):
                 by_candidate[(name, version)].append((url, metadata))
@@ -605,23 +607,21 @@ async def resolve(
     end = time.time()
     print(f"resolution ours took {end - start:.3f}s")
 
-    # First make preferred name tuples, so we can sort them like pip
-    name_version = []
-    requirements = {}
+    package_data = {}
     for name, (version, _extras) in sorted(state.candidates.items()):
-        # E.g. "Django" instead of "django"
-        # TODO: Why do we sometimes say different things than pip here?
-        preferred_name = state.metadata_cache[(name, version)].name
-        name_version.append((preferred_name, version))
-        requirements[(preferred_name, version)] = [
-            parse_requirement_fixup(requires_dist, None)
-            for requires_dist in (
-                state.metadata_cache[(name, version)].requires_dist or []
-            )
-        ]
-    name_version.sort()
+        package_data[(name, version)] = ReleaseData(
+            unnormalized_name=state.metadata_cache[(name, version)].name,
+            requirements=[
+                parse_requirement_fixup(requires_dist, None)
+                for requires_dist in (
+                    state.metadata_cache[(name, version)].requires_dist or []
+                )
+            ],
+            metadata=state.metadata_cache[(name, version)],
+            files=state.versions_cache[name][version],
+        )
 
-    return Resolution([root_requirement], name_version, requirements)
+    return Resolution([root_requirement], package_data)
 
 
 def freeze(resolution: Resolution, root_requirement: Requirement) -> str:
@@ -630,17 +630,17 @@ def freeze(resolution: Resolution, root_requirement: Requirement) -> str:
 
     # We want to have a trailing newline
     lines = [
-        f"{preferred_name}=={version}\n"
-        for preferred_name, version in resolution.packages
+        f"{package_data.unnormalized_name}=={version}\n"
+        for (name, version), package_data in resolution.package_data.items()
     ]
     resolutions_ours.joinpath(root_requirement.name).with_suffix(".txt").write_text(
         "".join(lines)
     )
     toml_data = {}
-    for (name, version), requirements in sorted(resolution.requirements.items()):
+    for (name, version), package_data in sorted(resolution.package_data.items()):
         toml_data[name] = {
             "version": str(version),
-            "requirements": [str(req) for req in requirements],
+            "requirements": [str(req) for req in package_data.requirements],
         }
 
     pseudo_lock_file = resolutions_ours.joinpath(root_requirement.name).with_suffix(
@@ -667,10 +667,13 @@ def main():
 
     if len(sys.argv) == 2:
         root_requirement = Requirement(sys.argv[1])
+    start = time.time()
     resolution: Resolution = asyncio.run(
         resolve(root_requirement, requires_python, Cache(default_cache_dir))
     )
     print(freeze(resolution, root_requirement))
+    end = time.time()
+    print(f"Took {end - start:.2}s")
 
 
 if __name__ == "__main__":

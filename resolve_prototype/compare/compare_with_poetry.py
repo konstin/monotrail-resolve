@@ -4,6 +4,7 @@ import sys
 from typing import Dict, Tuple
 
 from pypi_types import pep508_rs
+from pypi_types.pep440_rs import VersionSpecifier
 
 from resolve_prototype.common import Cache, default_cache_dir
 from resolve_prototype.compare.poetry_lock import (
@@ -32,7 +33,7 @@ def compare_with_poetry(
         )
         poetry_current = read_poetry_requirements_current(root_requirement)
     logger.info(f"Resolving {root_requirement} with ours")
-    requires_python = pep508_rs.VersionSpecifier(
+    requires_python = VersionSpecifier(
         f"=={sys.version_info.major}.{sys.version_info.minor}"
     )
     ours_resolution: Resolution = asyncio.run(
@@ -45,7 +46,7 @@ def compare_with_poetry(
     }
     ours_resolution_env: Dict[str, str] = {
         name.lower().replace("-", "_").replace(".", "_"): str(version)
-        for name, version in ours_resolution_env.packages
+        for name, version in ours_resolution_env.package_data
     }
     return ours_resolution_env, poetry_current
 
