@@ -92,7 +92,7 @@ async def get_releases(
 
     # normalize removes all dots in the name
     cached = cache.get("pypi_simple_releases", normalize(project) + ".json")
-    if cached and not refresh:
+    if cached and not refresh and not cache.refresh_versions:
         logger.info(f"Using cached releases for {url}")
         return parse_releases_data(project, cached)
 

@@ -1,11 +1,12 @@
 use crate::pypi_releases;
 use once_cell::sync::Lazy;
 use pep440_rs::Version;
+use pep508_rs::{MarkerOperator, MarkerTree, MarkerValue, Requirement};
 use pyo3::exceptions::{PyFileNotFoundError, PyRuntimeError, PyValueError};
 use pyo3::pyfunction;
 use pyo3::PyResult;
 use regex::Regex;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
@@ -111,4 +112,55 @@ pub fn parse_releases_data(
     }
 
     Ok((releases, ignored_filenames, invalid_versions))
+}
+
+/// Depth-first recursive iteration over a MarkerTree to collect all marker mappings.
+///
+/// Ignores everything that doesn't look like `extras = ...`, `extras != ...`, `... = extras` or
+/// `... != extras`
+pub fn collect_extras_marker_tree(markers: &MarkerTree, mapping: &mut HashSet<String>) {
+    match markers {
+        MarkerTree::Expression(expression) => {
+            match (
+                &expression.l_value,
+                &expression.operator,
+                &expression.r_value,
+            ) {
+                (
+                    MarkerValue::Extra,
+                    MarkerOperator::Equal | MarkerOperator::NotEqual,
+                    MarkerValue::QuotedString(extra),
+                )
+                | (
+                    MarkerValue::QuotedString(extra),
+                    MarkerOperator::Equal | MarkerOperator::NotEqual,
+                    MarkerValue::Extra,
+                ) => {
+                    mapping.insert(extra.to_string());
+                }
+                _ => {
+                    // We ignore all other or weird patterns
+                }
+            }
+        }
+        MarkerTree::And(marker_trees) | MarkerTree::Or(marker_trees) => {
+            for marker_tree in marker_trees {
+                collect_extras_marker_tree(marker_tree, mapping);
+            }
+        }
+    }
+}
+
+/// Returns all extras that affect this requirement
+///
+/// TODO(konstin): Extra name normalization
+#[pyfunction]
+pub fn collect_extras(requirement: &Requirement) -> HashSet<String> {
+    if let Some(markers) = &requirement.marker {
+        let mut mapping = HashSet::new();
+        collect_extras_marker_tree(markers, &mut mapping);
+        mapping
+    } else {
+        HashSet::new()
+    }
 }

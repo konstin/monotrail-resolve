@@ -27,11 +27,13 @@ class Cache:
     root_cache_dir: Path
     read: bool
     write: bool
+    refresh_versions: bool
 
-    def __init__(self, root_cache_dir: Path, read: bool = True, write: bool = True):
+    def __init__(self, root_cache_dir: Path, read: bool = True, write: bool = True, refresh_versions: bool = False):
         self.root_cache_dir = root_cache_dir
         self.read = read
         self.write = write
+        self.refresh_versions=refresh_versions
 
     def filename(self, bucket: str, name: str) -> Path:
         return self.root_cache_dir.joinpath(bucket).joinpath(name)

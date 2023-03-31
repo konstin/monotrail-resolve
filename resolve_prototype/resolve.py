@@ -174,6 +174,9 @@ class ReleaseData:
     metadata: pypi_metadata.Metadata
     # The list of files for this release
     files: List[pypi_releases.File]
+    # The list of all extras in our resolution, which is a non-strict subset of all
+    # extras of this package
+    extras: Set[str]
 
 
 @dataclass
@@ -609,16 +612,18 @@ async def resolve(
 
     package_data = {}
     for name, (version, _extras) in sorted(state.candidates.items()):
+        requirements = [
+            parse_requirement_fixup(requires_dist, None)
+            for requires_dist in (
+                state.metadata_cache[(name, version)].requires_dist or []
+            )
+        ]
         package_data[(name, version)] = ReleaseData(
             unnormalized_name=state.metadata_cache[(name, version)].name,
-            requirements=[
-                parse_requirement_fixup(requires_dist, None)
-                for requires_dist in (
-                    state.metadata_cache[(name, version)].requires_dist or []
-                )
-            ],
+            requirements=requirements,
             metadata=state.metadata_cache[(name, version)],
             files=state.versions_cache[name][version],
+            extras=state.candidates[name][1],
         )
 
     return Resolution([root_requirement], package_data)
@@ -627,13 +632,14 @@ async def resolve(
 def freeze(resolution: Resolution, root_requirement: Requirement) -> str:
     """Write out in the same format as `pip freeze`"""
     resolutions_ours.mkdir(exist_ok=True)
+    assert "/" not in str(root_requirement)
 
     # We want to have a trailing newline
     lines = [
         f"{package_data.unnormalized_name}=={version}\n"
         for (name, version), package_data in resolution.package_data.items()
     ]
-    resolutions_ours.joinpath(root_requirement.name).with_suffix(".txt").write_text(
+    resolutions_ours.joinpath(str(root_requirement)).with_suffix(".txt").write_text(
         "".join(lines)
     )
     toml_data = {}
@@ -643,7 +649,7 @@ def freeze(resolution: Resolution, root_requirement: Requirement) -> str:
             "requirements": [str(req) for req in package_data.requirements],
         }
 
-    pseudo_lock_file = resolutions_ours.joinpath(root_requirement.name).with_suffix(
+    pseudo_lock_file = resolutions_ours.joinpath(str(root_requirement)).with_suffix(
         ".toml"
     )
     # much faster than tomlkit

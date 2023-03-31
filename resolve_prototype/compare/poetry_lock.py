@@ -6,8 +6,8 @@ from subprocess import check_call
 from typing import List, Tuple
 
 import packaging.requirements
-from pypi_types import pep508_rs
 
+from pypi_types import pep508_rs
 from resolve_prototype.compare.common import resolutions_poetry
 
 
@@ -43,7 +43,15 @@ def poetry_resolve(
     work_dir.mkdir(exist_ok=True, parents=True)
     # A requirement as name crashes poetry
     check_call(
-        ["poetry", "init", "--no-interaction", "--name", "resolutions_poetry"],
+        [
+            "poetry",
+            "init",
+            "--no-interaction",
+            "--name",
+            "resolutions_poetry",
+            "--python",
+            ">=3.8,<4.0",
+        ],
         cwd=work_dir,
     )
     start = time.time()

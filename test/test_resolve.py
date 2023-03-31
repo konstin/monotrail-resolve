@@ -205,7 +205,7 @@ async def test_pandas(respx_mock: MockRouter, pytestconfig: pytest.Config):
     http_mock = HttpMock(pytestconfig.rootpath, "pandas")
     http_mock.add_mocks(respx_mock)
 
-    requires_python = VersionSpecifier(">= 3.7")
+    requires_python = VersionSpecifier(">= 3.8")
     resolution = await resolve(
         Requirement("pandas"),
         requires_python,
@@ -235,7 +235,7 @@ async def test_meine_stadt_transparent(
     with patch(
         "resolve_prototype.resolve.build_sdist", sdist_metadata_mock.mock_build_sdist
     ):
-        requires_python = VersionSpecifier(">= 3.7")
+        requires_python = VersionSpecifier(">= 3.8")
         resolution = await resolve(
             Requirement("meine_stadt_transparent"),
             requires_python,
@@ -358,7 +358,7 @@ async def test_matplotlib(respx_mock: MockRouter, pytestconfig: pytest.Config):
     http_mock = HttpMock(pytestconfig.rootpath, "matplotlib")
     http_mock.add_mocks(respx_mock)
     cache_dir = pytestconfig.rootpath.joinpath("test-data").joinpath("fake_cache")
-    requires_python = VersionSpecifier(">= 3.7")
+    requires_python = VersionSpecifier(">= 3.8")
     resolution = await resolve(
         Requirement("matplotlib"),
         requires_python,
@@ -379,5 +379,4 @@ async def test_matplotlib(respx_mock: MockRouter, pytestconfig: pytest.Config):
         ("pyparsing", "3.0.9"),
         ("python-dateutil", "2.8.2"),
         ("six", "1.16.0"),
-        ("typing-extensions", "4.5.0"),
     ]

@@ -18,6 +18,7 @@ pub fn pypi_types(py: Python, module: &PyModule) -> PyResult<()> {
 
     module.add_function(wrap_pyfunction!(helper::filename_to_version, py)?)?;
     module.add_function(wrap_pyfunction!(helper::parse_releases_data, py)?)?;
+    module.add_function(wrap_pyfunction!(helper::collect_extras, py)?)?;
 
     let pypi_version_module = PyModule::new(py, "pypi_metadata")?;
     pypi_metadata::pypi_metadata(py, pypi_version_module)?;
