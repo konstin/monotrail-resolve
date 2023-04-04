@@ -27,7 +27,7 @@ fn normalize(name: &str) -> String {
 /// filenames may be kinda ambiguous in the sense that `tokenizer-rt-1.0-final1.tar.gz`
 /// is valid as well as `tokenizer-1.0.tar.gz`. That's why we try to match the suffix
 /// `.tar.gz` and the prefix by normalizing package name and the same length in the
-/// filename by https://peps.python.org/pep-0503/#normalized-names and then parse the
+/// filename by <https://peps.python.org/pep-0503/#normalized-names> and then parse the
 /// version out of the middle.
 #[pyfunction]
 pub fn filename_to_version(package_name: &str, filename: &str) -> PyResult<Option<String>> {

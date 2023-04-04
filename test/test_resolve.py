@@ -1,8 +1,8 @@
-import json
 import os
 from concurrent.futures import Executor
 from pathlib import Path
-from typing import Optional, Dict, Any
+from tempfile import TemporaryDirectory
+from typing import Dict, Any
 from unittest.mock import patch
 
 import httpx
@@ -14,14 +14,26 @@ from httpx import Response, AsyncClient
 from respx import MockRouter
 from zstandard import decompress, compress
 
-from pypi_types import pypi_metadata, pypi_releases, filename_to_version
+from pypi_types import pypi_releases, filename_to_version, core_metadata
 from pypi_types.pep440_rs import VersionSpecifier
 from pypi_types.pep508_rs import Requirement
 from resolve_prototype.common import Cache, default_cache_dir
-from resolve_prototype.resolve import parse_requirement_fixup, resolve
+from resolve_prototype.resolve import parse_requirement_fixup, resolve, Resolution
 
-assert_all_mocked = not os.environ.get("UPDATE_SNAPSHOTS")
-assert_all_called = not os.environ.get("UPDATE_SNAPSHOTS")
+update_snapshots = os.environ.get("UPDATE_SNAPSHOTS")
+assert_all_mocked = not update_snapshots
+assert_all_called = not update_snapshots
+
+
+class TrimmedMetadataCache(Cache):
+    """Only save METADATA files (the range requests are hard to mock)"""
+
+    def set(self, bucket: str, name: str, content: str):
+        if bucket == "wheel_metadata":
+            # crudely remove the Description which is a lot of data we don't need in
+            # the repo
+            content = content.split("\n\n")[0]
+            return super().set(bucket, name, content)
 
 
 class DummyExecutor(Executor):
@@ -66,7 +78,7 @@ def test_parse_requirement_fixup(caplog):
 
 
 def httpx_mock_impl(path: Path, request: httpx.Request) -> httpx.Response:
-    if os.environ.get("UPDATE_SNAPSHOTS") and not path.is_file():
+    if update_snapshots and not path.is_file():
         # Passthrough case
         response = requests.get(request.url, headers=request.headers)
         response.raise_for_status()
@@ -95,7 +107,7 @@ def httpx_mock_cache_impl(
 ) -> httpx.Response:
     path = data_dir.joinpath(file_stem).with_suffix(".json.zst")
 
-    if not path.is_file() and os.environ.get("UPDATE_SNAPSHOTS"):
+    if not path.is_file() and update_snapshots:
         path.write_bytes(compress(orjson.dumps({}), level=10))
 
     if not cache:
@@ -103,7 +115,7 @@ def httpx_mock_cache_impl(
 
     if saved := cache.get(name):
         return Response(200, json=saved)
-    elif os.environ.get("UPDATE_SNAPSHOTS"):
+    elif update_snapshots:
         # Passthrough case
         response = requests.get(request.url, headers=request.headers)
         response.raise_for_status()
@@ -153,17 +165,15 @@ class HttpMock:
         route = respx_mock.route(
             url__regex=r"https://pypi.org/pypi/(?P<name>[\w\d_-]+)/(?P<version>[\w\d_.-]+)/json"
         )
-        if os.environ.get("UPDATE_SNAPSHOTS"):
-            respx_mock.route(
-                url__regex=r"https://files.pythonhosted.org/packages/.*/.*/.*/.*.tar.gz"
-            ).pass_through()
+        if update_snapshots:
+            respx_mock.route(host="files.pythonhosted.org").pass_through()
         route.side_effect = self.httpx_mock_json_metadata
 
 
 class SdistMetadataMock:
     rootpath: Path
     test_name: str
-    data: Optional[Dict[str, dict]]
+    data: Dict[str, str]
     datafile: Path
 
     def __init__(self, test_name: str, rootpath: Path) -> None:
@@ -175,27 +185,42 @@ class SdistMetadataMock:
             .joinpath("sdist_metadata")
             .with_suffix(".json.zst")
         )
-        if os.environ.get("UPDATE_SNAPSHOTS") and not self.datafile.is_file():
+        if update_snapshots and not self.datafile.is_file():
             self.data = {}
         else:
             self.data = orjson.loads(decompress(self.datafile.read_bytes()))
 
     async def mock_build_sdist(
         self, client: AsyncClient, file: pypi_releases.File, _cache: Cache
-    ) -> pypi_metadata.Metadata:
-        if os.environ.get("UPDATE_SNAPSHOTS"):
-            from resolve_prototype.sdist import build_sdist
+    ) -> core_metadata.Metadata21:
+        if update_snapshots:
+            with TemporaryDirectory() as tempdir:
+                from resolve_prototype.sdist import build_sdist_impl
 
-            metadata = await build_sdist(
-                client, file, Cache(default_cache_dir, read=False, write=False)
-            )
-            self.data[file.filename] = orjson.loads(metadata.to_json_str())
+                metadata_path = await build_sdist_impl(client, file, tempdir)
+                metadata = core_metadata.Metadata21.read(
+                    str(metadata_path), file.filename
+                )
+                self.data[file.filename] = metadata_path.read_text()
             self.datafile.write_bytes(compress(orjson.dumps(self.data), level=10))
+            return metadata
 
         if capture := self.data.get(file.filename):
-            return pypi_metadata.parse_metadata(json.dumps(capture))
+            return core_metadata.Metadata21.from_bytes(capture.encode())
         else:
             raise RuntimeError(f"Missing sdist metadata snapshot for {file.filename}")
+
+
+def assert_resolution(resolution: Resolution, rootpath: Path, name: str):
+    frozen = "\n".join(
+        sorted(f"{name}=={version}" for name, version in resolution.package_data)
+    )
+    requirements_txt = (
+        rootpath.joinpath("test-data").joinpath(name).joinpath("requirements.txt")
+    )
+    if update_snapshots:
+        requirements_txt.write_text(frozen)
+    assert frozen == requirements_txt.read_text()
 
 
 @pytest.mark.asyncio
@@ -209,17 +234,10 @@ async def test_pandas(respx_mock: MockRouter, pytestconfig: pytest.Config):
     resolution = await resolve(
         Requirement("pandas"),
         requires_python,
-        Cache(default_cache_dir, read=False, write=False),
+        TrimmedMetadataCache(default_cache_dir, read=False, write=False),
         download_wheels=False,
     )
-    packages = sorted((name, str(version)) for name, version in resolution.package_data)
-    assert packages == [
-        ("numpy", "1.24.1"),
-        ("pandas", "1.5.2"),
-        ("python-dateutil", "2.8.2"),
-        ("pytz", "2022.7"),
-        ("six", "1.16.0"),
-    ]
+    assert_resolution(resolution, pytestconfig.rootpath, "pandas")
 
 
 @pytest.mark.asyncio
@@ -239,115 +257,10 @@ async def test_meine_stadt_transparent(
         resolution = await resolve(
             Requirement("meine_stadt_transparent"),
             requires_python,
-            Cache(default_cache_dir, read=False, write=False),
+            TrimmedMetadataCache(default_cache_dir, read=False, write=False),
             download_wheels=False,
         )
-    packages = sorted((name, str(version)) for name, version in resolution.package_data)
-    assert packages == [
-        ("ansicon", "1.89.0"),
-        ("anyascii", "0.3.1"),
-        ("arrow", "1.2.3"),
-        ("asgiref", "3.6.0"),
-        ("backports-zoneinfo", "0.2.1"),
-        ("beautifulsoup4", "4.9.3"),
-        ("blessed", "1.19.1"),
-        ("certifi", "2022.12.7"),
-        ("cffi", "1.15.1"),
-        ("charset-normalizer", "2.1.1"),
-        ("click", "8.1.3"),
-        ("colorama", "0.4.6"),
-        ("cryptography", "39.0.2"),
-        ("defusedxml", "0.7.1"),
-        ("django", "4.0.8"),
-        ("django-allauth", "0.51.0"),
-        ("django-anymail", "8.6"),
-        ("django-csp", "3.7"),
-        ("django-decorator-include", "3.0"),
-        ("django-elasticsearch-dsl", "7.2.2"),
-        ("django-environ", "0.9.0"),
-        ("django-filter", "21.1"),
-        ("django-geojson", "3.2.1"),
-        ("django-modelcluster", "6.0"),
-        ("django-permissionedforms", "0.1"),
-        ("django-picklefield", "3.1"),
-        ("django-q", "1.3.9"),
-        ("django-q-sentry", "0.1.6"),
-        ("django-settings-export", "1.2.1"),
-        ("django-simple-history", "3.2.0"),
-        ("django-taggit", "2.1.0"),
-        ("django-treebeard", "4.6.0"),
-        ("django-webpack-loader", "1.6.0"),
-        ("django-widget-tweaks", "1.4.12"),
-        ("djangorestframework", "3.14.0"),
-        ("draftjs-exporter", "2.1.7"),
-        ("elasticsearch", "7.10.1"),
-        ("elasticsearch-dsl", "7.4.0"),
-        ("et-xmlfile", "1.1.0"),
-        ("flask", "2.2.2"),
-        ("geoextract", "0.3.1"),
-        ("geographiclib", "2.0"),
-        ("geopy", "2.3.0"),
-        ("gunicorn", "20.1.0"),
-        ("html2text", "2020.1.16"),
-        ("html5lib", "1.1"),
-        ("icalendar", "4.1.0"),
-        ("idna", "3.4"),
-        ("importlib-metadata", "6.0.0"),
-        ("itsdangerous", "2.1.2"),
-        ("jinja2", "3.1.2"),
-        ("jinxed", "1.2.0"),
-        ("joblib", "1.2.0"),
-        ("jsonfield", "3.1.0"),
-        ("l18n", "2021.3"),
-        ("markupsafe", "2.1.1"),
-        ("meine-stadt-transparent", "0.2.14"),
-        ("minio", "7.1.12"),
-        ("mysqlclient", "2.1.1"),
-        ("nltk", "3.8.1"),
-        ("numpy", "1.24.1"),
-        ("oauthlib", "3.2.2"),
-        ("openpyxl", "3.0.10"),
-        ("osm2geojson", "0.2.3"),
-        ("pillow", "9.4.0"),
-        ("psycopg2", "2.9.5"),
-        ("pyahocorasick", "1.4.4"),
-        ("pycparser", "2.21"),
-        ("pyjwt", "2.6.0"),
-        ("pypdf2", "2.12.1"),
-        ("python-dateutil", "2.8.2"),
-        ("python-slugify", "6.1.2"),
-        ("python3-openid", "3.2.0"),
-        ("pytz", "2022.7"),
-        ("redis", "3.5.3"),
-        ("regex", "2022.10.31"),
-        ("requests", "2.28.1"),
-        ("requests-oauthlib", "1.3.1"),
-        ("scipy", "1.10.0"),
-        ("sentry-sdk", "1.12.1"),
-        ("shapely", "2.0.1"),
-        ("six", "1.16.0"),
-        ("soupsieve", "2.3.2.post1"),
-        ("splinter", "0.17.0"),
-        ("sqlparse", "0.4.3"),
-        ("tablib", "3.3.0"),
-        ("telepath", "0.3"),
-        ("text-unidecode", "1.3"),
-        ("tqdm", "4.64.1"),
-        ("typing-extensions", "4.4.0"),
-        ("tzdata", "2023.2"),
-        ("unidecode", "1.3.6"),
-        ("urllib3", "1.26.13"),
-        ("wagtail", "3.0.3"),
-        ("wand", "0.6.10"),
-        ("wcwidth", "0.2.5"),
-        ("webencodings", "0.5.1"),
-        ("werkzeug", "2.2.2"),
-        ("willow", "1.4.1"),
-        ("xlrd", "2.0.1"),
-        ("xlsxwriter", "3.0.5"),
-        ("xlwt", "1.3.0"),
-        ("zipp", "3.11.0"),
-    ]
+    assert_resolution(resolution, pytestconfig.rootpath, "meine_stadt_transparent")
 
 
 @pytest.mark.asyncio
@@ -362,21 +275,8 @@ async def test_matplotlib(respx_mock: MockRouter, pytestconfig: pytest.Config):
     resolution = await resolve(
         Requirement("matplotlib"),
         requires_python,
-        Cache(cache_dir, read=True, write=False),
+        TrimmedMetadataCache(cache_dir, read=True, write=True),
         download_wheels=True,
         executor=DummyExecutor,
     )
-    packages = sorted((name, str(version)) for name, version in resolution.package_data)
-    assert packages == [
-        ("contourpy", "1.0.6"),
-        ("cycler", "0.11.0"),
-        ("fonttools", "4.38.0"),
-        ("kiwisolver", "1.4.4"),
-        ("matplotlib", "3.6.2"),
-        ("numpy", "1.24.1"),
-        ("packaging", "23.0"),
-        ("pillow", "9.4.0"),
-        ("pyparsing", "3.0.9"),
-        ("python-dateutil", "2.8.2"),
-        ("six", "1.16.0"),
-    ]
+    assert_resolution(resolution, pytestconfig.rootpath, "matplotlib")

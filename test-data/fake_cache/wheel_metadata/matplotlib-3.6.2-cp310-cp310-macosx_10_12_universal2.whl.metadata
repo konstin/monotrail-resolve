@@ -1,0 +1,50 @@
+Metadata-Version: 2.1
+Name: matplotlib
+Version: 3.6.2
+Summary: Python plotting package
+Home-page: https://matplotlib.org
+Download-URL: https://matplotlib.org/stable/users/installing/index.html
+Author: John D. Hunter, Michael Droettboom
+Author-email: matplotlib-users@python.org
+License: PSF
+Project-URL: Documentation, https://matplotlib.org
+Project-URL: Source Code, https://github.com/matplotlib/matplotlib
+Project-URL: Bug Tracker, https://github.com/matplotlib/matplotlib/issues
+Project-URL: Forum, https://discourse.matplotlib.org/
+Project-URL: Donate, https://numfocus.org/donate-to-matplotlib
+Platform: any
+Classifier: Development Status :: 5 - Production/Stable
+Classifier: Framework :: Matplotlib
+Classifier: Intended Audience :: Science/Research
+Classifier: Intended Audience :: Education
+Classifier: License :: OSI Approved :: Python Software Foundation License
+Classifier: Programming Language :: Python
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Topic :: Scientific/Engineering :: Visualization
+Requires-Python: >=3.8
+Description-Content-Type: text/x-rst
+License-File: LICENSE/LICENSE
+License-File: LICENSE/LICENSE_AMSFONTS
+License-File: LICENSE/LICENSE_BAKOMA
+License-File: LICENSE/LICENSE_CARLOGO
+License-File: LICENSE/LICENSE_COLORBREWER
+License-File: LICENSE/LICENSE_COURIERTEN
+License-File: LICENSE/LICENSE_JSXTOOLS_RESIZE_OBSERVER
+License-File: LICENSE/LICENSE_QHULL
+License-File: LICENSE/LICENSE_QT4_EDITOR
+License-File: LICENSE/LICENSE_SOLARIZED
+License-File: LICENSE/LICENSE_STIX
+License-File: LICENSE/LICENSE_YORICK
+Requires-Dist: contourpy (>=1.0.1)
+Requires-Dist: cycler (>=0.10)
+Requires-Dist: fonttools (>=4.22.0)
+Requires-Dist: kiwisolver (>=1.0.1)
+Requires-Dist: numpy (>=1.19)
+Requires-Dist: packaging (>=20.0)
+Requires-Dist: pillow (>=6.2.0)
+Requires-Dist: pyparsing (>=2.2.1)
+Requires-Dist: python-dateutil (>=2.7)

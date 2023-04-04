@@ -1,6 +1,6 @@
 # stubgen -p pep508_rs
 
-from typing import Any, Union, List
+from typing import Any, Union, List, Optional
 
 from pypi_types.pep440_rs import Version
 
@@ -24,7 +24,7 @@ class MarkerEnvironment:
 class Pep508Error(ValueError): ...
 
 class Requirement:
-    extras: List[str]
+    extras: Optional[List[str]]
     name: str
     version_or_url: Union[str, Version]
 

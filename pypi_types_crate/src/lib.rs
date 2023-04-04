@@ -3,10 +3,12 @@ use pyo3::{pyclass, pymodule, wrap_pyfunction, PyResult, Python};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-mod helper;
-mod pypi_metadata;
-mod pypi_releases;
+pub mod core_metadata;
+pub mod helper;
+pub mod pypi_metadata;
+pub mod pypi_releases;
 
+/// Hide something from python
 #[pyclass]
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(transparent)]
@@ -14,15 +16,23 @@ pub struct Opaque(Value);
 
 #[pymodule]
 pub fn pypi_types(py: Python, module: &PyModule) -> PyResult<()> {
-    pyo3_log::init();
+    // If some other module already initialized the log, that's ok
+    #[allow(unused_must_use)]
+    {
+        pyo3_log::try_init();
+    }
 
     module.add_function(wrap_pyfunction!(helper::filename_to_version, py)?)?;
     module.add_function(wrap_pyfunction!(helper::parse_releases_data, py)?)?;
     module.add_function(wrap_pyfunction!(helper::collect_extras, py)?)?;
 
-    let pypi_version_module = PyModule::new(py, "pypi_metadata")?;
-    pypi_metadata::pypi_metadata(py, pypi_version_module)?;
-    module.add_submodule(pypi_version_module)?;
+    let core_metadata_module = PyModule::new(py, "core_metadata")?;
+    core_metadata::core_metadata(py, core_metadata_module)?;
+    module.add_submodule(core_metadata_module)?;
+
+    let pypi_metadata_module = PyModule::new(py, "pypi_metadata")?;
+    pypi_metadata::pypi_metadata(py, pypi_metadata_module)?;
+    module.add_submodule(pypi_metadata_module)?;
 
     let pypi_releases_module = PyModule::new(py, "pypi_releases")?;
     pypi_releases::pypi_releases(py, pypi_releases_module)?;

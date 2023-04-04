@@ -1,3 +1,5 @@
+//! For data from e.g. <https://pypi.org/simple/tqdm/?format=application/vnd.pypi.simple.v1+json>
+
 use pyo3::basic::CompareOp;
 use pyo3::exceptions::PyNotImplementedError;
 use pyo3::types::PyModule;

@@ -59,10 +59,10 @@ def main():
     if ours_resolution == pip_resolution:
         print("Resolutions identical")
 
-    for ours_only in ours_resolution.keys() - pip_resolution.keys():
+    for ours_only in sorted(ours_resolution.keys() - pip_resolution.keys()):
         print(f"ours only: {ours_only} {ours_resolution[ours_only]}")
 
-    for pip_only in pip_resolution.keys() - ours_resolution.keys():
+    for pip_only in sorted(pip_resolution.keys() - ours_resolution.keys()):
         print(f"pip only: {pip_only} {pip_resolution[pip_only]}")
 
     for shared in pip_resolution.keys() & ours_resolution.keys():

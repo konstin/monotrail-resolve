@@ -28,11 +28,14 @@ For each package in the queue
 * if we see a sdist, we first pretend we didn't and resolve_prototype it as a packages
   with no deps on its own
 When the queue is empty:
-* If there are versions and/or metadata to be fetched, do so. queue all those for
-  which we now have new metadata
+* If there are versions and/or metadata to be fetched, do so and mark all affected
+  packages
 When the queue is still empty:
-* fetch, unpack and PEP 517 query metadata for sdists in parallel, invalid them with
-  `changed_metadata` and queue a
+* If there is wheel metadata to be fetched, fetch wheel metadata and mark all packages
+  affected by removed or added requirements
+When the queue is still empty:
+* fetch, unpack and PEP 517 query metadata for sdists in parallel and mark all packages
+  affected by new requirements
 """
 
 import asyncio
@@ -50,15 +53,15 @@ import httpx
 import tomli_w
 from httpx import AsyncClient
 
-from pypi_types import pypi_releases, pypi_metadata
+from pypi_types import pypi_releases, pypi_metadata, core_metadata
 from pypi_types.pep440_rs import Version, VersionSpecifier
 from pypi_types.pep508_rs import Pep508Error, Requirement, MarkerEnvironment
 from resolve_prototype.common import (
-    normalize,
     default_cache_dir,
     Cache,
     MINIMUM_SUPPORTED_PYTHON_MINOR,
     NormalizedName,
+    normalize,
 )
 from resolve_prototype.compare.common import resolutions_ours
 from resolve_prototype.package_index import (
@@ -117,17 +120,22 @@ class State:
 
     # package name -> list of versions and the files (sdist and wheel only) from pypi
     versions_cache: Dict[str, Dict[Version, List[pypi_releases.File]]]
-    # (package name, package version) -> Python core metadata (or at least the part
-    # we currently use of it)
-    metadata_cache: Dict[Tuple[str, Version], pypi_metadata.Metadata]
-    # For sdists, we pick a candidates before we have the correct requires_dist, so we
-    # have to force an update without candidate change when we have an update
-    changed_metadata: Set[Tuple[NormalizedName, Version]]
-    # We need to remove the old edges, so we need to remember the wrong metadata
-    old_metadata: Dict[Tuple[NormalizedName, Version], pypi_metadata.Metadata]
-    # We query wheel metadata through range requests and save it here
-    wheel_metadata_cache: Dict[str, pypi_metadata.Metadata]
-
+    # The requirements, either from wheel_metadata, or if that isn't available,
+    # from pypi_metadata. Extra fields because there can be parsing errors with
+    # the pypi metadata
+    metadata_requirements: Dict[Tuple[str, Version], List[Requirement]]
+    # (package name, package version) -> pypi metadata, possibly wrong given
+    # wheel_metadata
+    pypi_metadata: Dict[Tuple[str, Version], pypi_metadata.Metadata]
+    # (package name, package version) -> metadata from a while from pypi
+    wheel_metadata: Dict[Tuple[str, Version], core_metadata.Metadata21]
+    # (wheel filename) -> METADATA contents
+    wheel_file_metadata: Dict[str, core_metadata.Metadata21]
+    # Reprocess this even if the version stayed the same
+    # Stores a list of the old requirements so we can remove them
+    changed_metadata: Dict[Tuple[str, Version], List[Requirement]]
+    # Reverse mapping: package name -> requirements. Without version since those are
+    # the ones we determine the version from
     requirements_per_package: Dict[
         NormalizedName, Set[Tuple[Requirement, Tuple[NormalizedName, Version]]]
     ]
@@ -139,7 +147,6 @@ class State:
     executor: Type[Executor]
 
     def __init__(self, root_requirement: Requirement, executor: Type[Executor]):
-        self.old_metadata = {}
         self.root_requirement = root_requirement
         self.user_constraints = {normalize(root_requirement.name): [root_requirement]}
         self.queue = [normalize(root_requirement.name)]
@@ -147,11 +154,13 @@ class State:
         self.fetch_metadata = {}
         self.resolved_sdists = set()
         self.versions_cache = {}
-        self.metadata_cache = {}
-        self.changed_metadata = set()
-        self.wheel_metadata_cache = {}
+        self.metadata_requirements = {}
+        self.pypi_metadata = {}
+        self.wheel_metadata = {}
+        self.wheel_file_metadata = {}
+        self.changed_metadata = {}
         self.requirements_per_package = defaultdict(set)
-        self.candidates = dict()
+        self.candidates = {}
         self.executor = executor
 
         for name, [requirement] in self.user_constraints.items():
@@ -170,8 +179,8 @@ class ReleaseData:
     unnormalized_name: str
     # The requirements read from the wheel or the PEP 517 api with fixups
     requirements: List[Requirement]
-    # Metadata read from the wheel or the PEP 517 api
-    metadata: pypi_metadata.Metadata
+    # Metadata read from the wheel
+    metadata: core_metadata.Metadata21
     # The list of files for this release
     files: List[pypi_releases.File]
     # The list of all extras in our resolution, which is a non-strict subset of all
@@ -245,7 +254,7 @@ class Resolution:
                 if normalize(req.name) not in selected:
                     selected.add(normalize(req.name))
                     add_to_queue = True
-                if not set(req.extras or []) <= selected_extras[req.name]:
+                if not set(req.extras or []) <= selected_extras[normalize(req.name)]:
                     selected_extras[normalize(req.name)].update(req.extras)
                     add_to_queue = True
                 if add_to_queue:
@@ -289,6 +298,10 @@ async def resolve(
     while True:
         while state.queue:
             name = state.queue.pop(0)
+            # We've had this branch before but the version data isn't there yet
+            if name in state.fetch_versions:
+                continue
+
             logger.debug(f"Processing {name}")
             # First time we're encountering this package?
             if name not in state.versions_cache:
@@ -299,7 +312,7 @@ async def resolve(
             # Apply all requirements and find the highest (given `maximum_versions`)
             # possible version
             new_version = None
-            new_extras = None
+            new_extras: Set[str] = set()
             for version in sorted(
                 state.versions_cache[name].keys(), reverse=maximum_versions
             ):
@@ -308,10 +321,10 @@ async def resolve(
                 if version.any_prerelease():
                     continue
                 is_compatible = True
-                extras = set()
+                extras: Set[str] = set()
 
                 for requirement, _source in state.requirements_per_package[name]:
-                    extras.update(requirement.extras or [])
+                    extras.update(set(requirement.extras or []))
                     if not requirement.version_or_url:
                         continue
                     for specifier in requirement.version_or_url:
@@ -319,23 +332,6 @@ async def resolve(
                             is_compatible = False
                             break
                 if is_compatible:
-                    if metadata := state.metadata_cache.get((name, version)):
-                        all_valid = True
-                        for requirement in metadata.requires_dist or []:
-                            try:
-                                parse_requirement_fixup(
-                                    requirement, f"{name} {version}"
-                                )
-                            except Pep508Error:
-                                # Yep this even happens surprisingly often
-                                logger.warning(
-                                    f"Ignoring {name} {version} due to invalid"
-                                    f" requires_dist entry `{requirement}`: e"
-                                )
-                                all_valid = False
-                                break
-                        if not all_valid:
-                            continue
                     new_version = version
                     new_extras = extras
                     break
@@ -349,13 +345,16 @@ async def resolve(
                 )
 
             # If we had the same constraints
+            if (name, new_version) in state.changed_metadata:
+                changed_requirement = state.changed_metadata.pop((name, new_version))
+                logger.debug(f"New wheel metadata for {name} {new_version}")
+            else:
+                changed_requirement = None
             old_version, old_extras = state.candidates.get(name, (None, None))
             if new_version == old_version and new_extras == old_extras:
-                if (name, new_version) not in state.changed_metadata:
+                if changed_requirement is None:
                     logger.info(f"No changes for {name}")
                     continue
-                else:
-                    logger.info(f"Changed metadata for {name} {new_version}")
             else:
                 if old_version:
                     logger.info(
@@ -366,89 +365,54 @@ async def resolve(
                     logger.debug(f"Picking {name} {new_version} {new_extras}")
 
             # Do we actually already know the requires_dist for this new candidate?
-            if (name, new_version) not in state.metadata_cache:
+            if (name, new_version) not in state.pypi_metadata:
                 logger.debug(f"Missing metadata for {name} {new_version}, delaying")
                 # If we had chosen a higher version to fetch in previous iteration,
                 # overwrite
-                state.fetch_metadata[name] = new_version
+                state.fetch_metadata[normalize(name)] = new_version
                 continue
-
-            # Update the outgoing edges
-            if old_version:
-                old_requires_dist = (
-                    state.metadata_cache[(name, old_version)].requires_dist or []
-                )
-                old_requirements = set()
-                for requires_dist in old_requires_dist:
-                    requirement = parse_requirement_fixup(requires_dist, None)
-                    if requirement.evaluate_extras_and_python_version(
-                        old_extras, python_versions
-                    ):
-                        old_requirements.add(requirement)
-
-            else:
-                old_requirements = set()
-
-            # Edge case: The old metadata on pypi was a lie, we have updated the
-            # metadata from wheel metadata overwrite what we had normally done in the
-            # last step
-            if (name, new_version) in state.changed_metadata:
-                for _, value in state.requirements_per_package.items():
-                    reqs = list(filter(lambda x: x[1] == (name, new_version), value))
-                    # multiple requirements for the same package are not forbidden
-                    # (might even make sense with markers)
-                    for req in reqs:
-                        value.remove(req)
-                old_requirements = set()
-
-            new_requires_dist = (
-                state.metadata_cache[(name, new_version)].requires_dist or []
-            )
-            new_requirements = set()
-            for requires_dist in new_requires_dist:
-                requirement = parse_requirement_fixup(requires_dist, None)
-                if requirement.evaluate_extras_and_python_version(
-                    new_extras, python_versions
-                ):
-                    new_requirements.add(requirement)
 
             state.candidates[name] = (new_version, new_extras)
 
-            # Remove and add edges. For (old_requirements & new_requirements) we just
-            # change the candidate in there
-            # and the requirement stay the same
-            for old in old_requirements:
-                old_entry = (old, (name, old_version))
-                # For sdist we didn't add anything the first time because we didn't know
-                # requires_dist yet, so we can't remove that now
-                if (
-                    (name, new_version) in state.changed_metadata
-                    and old_entry not in state.requirements_per_package[old.name]
+            # Update the outgoing edges
+            if old_version:
+                if changed_requirement is not None:
+                    old_requirements = changed_requirement
+                else:
+                    old_requirements = state.metadata_requirements[(name, old_version)]
+                for old in old_requirements:
+                    if not old.evaluate_extras_and_python_version(
+                        old_extras, python_versions
+                    ):
+                        continue
+                    # We always need to remove all of them since the version always
+                    # changed
+                    state.requirements_per_package[normalize(old.name)].remove(
+                        (old, (name, old_version))
+                    )
+
+                    if normalize(old.name) not in state.queue:
+                        logger.debug(f"Queuing {normalize(old.name)}")
+                        state.queue.append(normalize(old.name))
+            else:
+                old_requirements = []
+
+            for new in state.metadata_requirements[(name, new_version)]:
+                if not new.evaluate_extras_and_python_version(
+                    new_extras, python_versions
                 ):
                     continue
-                # otherwise this must be there
-                state.requirements_per_package[normalize(old.name)].remove(old_entry)
-            for new in new_requirements:
                 state.requirements_per_package[normalize(new.name)].add(
                     (new, (name, new_version))
                 )
-            # Queue the packages with actually changed requirements for recalculation
-            for changed in (old_requirements | new_requirements) - (
-                old_requirements & new_requirements
-            ):
-                # For fetch_versions it's no use to requeue this here (we still don't
-                # know which version do even exist), but for fetch_metadata we might
-                # pick a different version in the next iteration and avoid fetching
-                # useless metadata
+                # Same requirement might be in two version of a package, otherwise
+                # we need to recompute it
                 if (
-                    changed.name not in state.queue
-                    and changed.name not in state.fetch_versions
+                    new not in old_requirements
+                    and normalize(new.name) not in state.queue
                 ):
-                    logger.debug(f"Queuing {changed.name}")
-                    state.queue.append(normalize(changed.name))
-
-            if (name, new_version) in state.changed_metadata:
-                state.changed_metadata.remove((name, new_version))
+                    logger.debug(f"Queuing {normalize(new.name)}")
+                    state.queue.append(normalize(new.name))
 
         candidates_fmt = " ".join(
             [
@@ -459,8 +423,8 @@ async def resolve(
         logger.info(f"Candidates: {candidates_fmt}")
         if state.fetch_versions or state.fetch_metadata:
             logger.info(
-                f"Fetching versions for {len(state.fetch_versions)} and also"
-                f" metadata for {len(state.fetch_metadata)}"
+                f"Fetching versions for {len(state.fetch_versions)} project(s) and "
+                f"metadata for {len(state.fetch_metadata)} version(s)"
             )
 
         async with AsyncClient(http2=True, transport=transport) as client:
@@ -489,10 +453,26 @@ async def resolve(
                     for name, version in fetch_metadata_sorted
                 ]
             )
-        state.metadata_cache.update(dict(zip(fetch_metadata_sorted, projects_metadata)))
+
+        for (name, version), metadata in zip(fetch_metadata_sorted, projects_metadata):
+            try:
+                state.metadata_requirements[(name, version)] = [
+                    parse_requirement_fixup(requirement, f"{name} {version}")
+                    for requirement in metadata.requires_dist or []
+                ]
+            except Pep508Error as err:
+                logger.warning(
+                    f"Invalid requirements for {name} {version}, "
+                    f"skipping this release: {err}"
+                )
+                # Take this version out of the rotation
+                state.versions_cache[name].pop(version)
+                if name not in state.queue:
+                    state.queue.append(name)
+            state.pypi_metadata[(name, version)] = metadata
         # we got the info where we delayed previously, now actually propagate those
         # requirements
-        state.queue.extend(state.fetch_metadata)
+        state.queue.extend(set(state.fetch_metadata) - set(state.queue))
         state.fetch_metadata.clear()
 
         # Make the resolution deterministic and easier to understand from the logs
@@ -501,68 +481,9 @@ async def resolve(
         if state.queue:
             continue
 
-        # Check the packages with wheels with empty requires_dist, they might not be so
-        # empty after all (name. version, filename, url)
-        query_wheels: List[Tuple[str, Version, str, Cache]] = []
-        for name, (version, _extras) in state.candidates.items():
-            # Here we only want to check for those where requires_dist is empty
-            if state.metadata_cache[(name, version)].requires_dist:
-                continue
-
-            for file in state.versions_cache[name][version]:
-                if (
-                    file.filename.endswith(".whl")
-                    and file.filename not in state.wheel_metadata_cache
-                ):
-                    # TODO: Make sure it's an all-or-nothing per release here
-                    query_wheels.append((name, version, file.url, cache))
-                    break
-
         # Allow to skip this step
-        if not download_wheels:
-            query_wheels = []
-
-        # Actually download the wheel metadata from the exact section of the zip
-        if query_wheels:
-            logger.info(
-                f"Validating wheel metadata for {len(query_wheels)} empty requires_dist"
-            )
-            # ZipFile doesn't support async :/
-            with ThreadPoolExecutor() as executor:
-                metadatas = executor.map(get_metadata_from_wheel, *zip(*query_wheels))
-            by_candidate: Dict[
-                Tuple[NormalizedName, Version], List[Tuple[str, pypi_metadata.Metadata]]
-            ] = defaultdict(list)
-            for metadata, (name, version, url, _) in zip(metadatas, query_wheels):
-                by_candidate[(name, version)].append((url, metadata))
-            for (name, version), metadatas in by_candidate.items():
-                metadata = metadatas[0][1]
-                for url, other_metadata in metadatas:
-                    assert metadata == other_metadata, (
-                        name,
-                        version,
-                        metadatas[0][0],
-                        metadata,
-                        url,
-                        other_metadata,
-                    )
-                state.wheel_metadata_cache[metadatas[0][0]] = metadata
-                if (
-                    state.metadata_cache[(name, version)].requires_dist
-                    != metadata.requires_dist
-                ):
-                    logger.warning(
-                        f"Diverging requires_dist metadata for {name} {version}:\n"
-                        f"pypi json api: "
-                        f"{state.metadata_cache[(name, version)].requires_dist or []}\n"
-                        f"wheel metadata: {metadata.requires_dist}"
-                    )
-                    state.old_metadata[(name, version)] = state.metadata_cache[
-                        (name, version)
-                    ]
-                    state.metadata_cache[(name, version)] = metadata
-                    state.changed_metadata.add((name, version))
-                    state.queue.append(name)
+        if download_wheels:
+            query_wheel_metadata(state, cache)
 
         # We found some missing requires_dist, we can resolve further before building
         # sdists
@@ -570,7 +491,7 @@ async def resolve(
             continue
 
         # Do we have sdist for which we don't know the metadata yet?
-        sdists: List[Tuple[str, Version, pypi_releases.File]] = []
+        sdists: List[Tuple[NormalizedName, Version, pypi_releases.File]] = []
         for name, (version, _extras) in state.candidates.items():
             if (name, version) in state.resolved_sdists:
                 continue
@@ -601,32 +522,149 @@ async def resolve(
             metadatas = await asyncio.gather(
                 *[build_sdist(client, sdist[2], cache) for sdist in sdists]
             )
-        for (name, version, _filename), metadata in zip(sdists, metadatas):
-            state.metadata_cache[(name, version)] = metadata
+        for (name, version, _filename), metadata in sorted(zip(sdists, metadatas)):
+            state.wheel_metadata[(name, version)] = metadata
+            state.metadata_requirements[(name, version)] = metadata.requires_dist
+            state.changed_metadata[(name, version)] = state.metadata_requirements[
+                (name, version)
+            ]
             state.resolved_sdists.add((name, version))
-            state.queue.append(name)
-            state.changed_metadata.add((name, version))
+            if name not in state.queue:
+                state.queue.append(name)
+
+            for added in sorted(metadata.requires_dist, key=str):
+                state.requirements_per_package[normalize(added.name)].add(
+                    (added, (name, version))
+                )
+                if normalize(added.name) not in state.queue:
+                    state.queue.append(normalize(added.name))
 
     end = time.time()
     print(f"resolution ours took {end - start:.3f}s")
 
     package_data = {}
     for name, (version, _extras) in sorted(state.candidates.items()):
-        requirements = [
-            parse_requirement_fixup(requires_dist, None)
-            for requires_dist in (
-                state.metadata_cache[(name, version)].requires_dist or []
-            )
-        ]
         package_data[(name, version)] = ReleaseData(
-            unnormalized_name=state.metadata_cache[(name, version)].name,
-            requirements=requirements,
-            metadata=state.metadata_cache[(name, version)],
+            unnormalized_name=state.pypi_metadata[(name, version)].name,
+            requirements=state.metadata_requirements[(name, version)],
+            # Currently, we only use the wheel metadata if the pypi requires_dist was
+            # empty
+            metadata=state.wheel_metadata.get((name, version))
+            or state.pypi_metadata[(name, version)],
             files=state.versions_cache[name][version],
             extras=state.candidates[name][1],
         )
 
     return Resolution([root_requirement], package_data)
+
+
+def query_wheel_metadata(state: State, cache: Cache):
+    """Actually download the wheel metadata from the exact section of the zip.
+
+    Here we only want to check for those where requires_dist is empty. That is because
+    e.g. https://files.pythonhosted.org/packages/9f/cd/670e5e178db87065ee60f60fb35b040abbb819a1f686a91d9ff799fc5048/torch-2.0.0-1-cp310-cp310-manylinux2014_aarch64.whl
+    has only the metadata for aarch64 and misses the conditional for x64:
+    Diverging requires_dist metadata for torch 2.0.0:
+    pypi json api: ["filelock", "typing-extensions", "sympy", "networkx", "jinja2",
+    "nvidia-cuda-nvrtc-cu11 == 11.7.99 ; platform_system == 'Linux' and
+    platform_machine == 'x86_64'", ...]
+    wheel metadata (https://files.pythonhosted.org/packages/9f/cd/670e5e178db87065ee60f60fb35b040abbb819a1f686a91d9ff799fc5048/torch-2.0.0-1-cp310-cp310-manylinux2014_aarch64.whl):
+    ["filelock", "typing-extensions", "sympy", "networkx", "jinja2",
+    "opt-einsum >= 3.3; extra == 'opt-einsum'"]
+    """
+    # Check the packages with wheels with empty requires_dist, they might not be so
+    # empty after all (name, version, filename, url, cache)
+    query_wheels: List[Tuple[str, Version, str, str, Cache]] = []
+    for name, (version, _extras) in state.candidates.items():
+        # See doc comment
+        if state.pypi_metadata[(name, version)].requires_dist:
+            continue
+
+        for file in state.versions_cache[name][version]:
+            if file.filename.endswith(".whl"):
+                if file.url not in state.wheel_file_metadata:
+                    query_wheels.append((name, version, file.filename, file.url, cache))
+                # TODO(konstin): Make sure it's an all-or-nothing per release here
+                break
+
+    logger.info(f"Validating wheel metadata for {len(query_wheels)} packages")
+
+    # Spawning a thread pool is expensive, only do it if we need it
+    all_cached = True
+    for _name, _version, filename, _url, cache in query_wheels:
+        metadata_filename = cache.get_filename(
+            "wheel_metadata", f"{filename.split('/')[0]}.metadata"
+        )
+        if not metadata_filename.is_file():
+            all_cached = False
+            break
+
+    if all_cached:
+        logger.debug("get_metadata_from_wheel without ThreadPoolExecutor (all cached)")
+        metadatas = [get_metadata_from_wheel(*x) for x in query_wheels]
+    else:
+        logger.debug("get_metadata_from_wheel with ThreadPoolExecutor (not all cached)")
+        # ZipFile doesn't support async :/
+        with ThreadPoolExecutor() as executor:
+            metadatas = executor.map(get_metadata_from_wheel, *zip(*query_wheels))
+    # (name, version) -> list[(url, metadata)]
+    by_candidate: Dict[
+        Tuple[NormalizedName, Version], List[Tuple[str, core_metadata.Metadata21]]
+    ] = defaultdict(list)
+    for metadata, (name, version, _filename, url, _cache) in zip(
+        metadatas, query_wheels
+    ):
+        if isinstance(metadata, Exception):
+            logger.warning(
+                f"Failed to parse METADATA for {name} {version} in {url}, "
+                f"removing it from the selection: {metadata}"
+            )
+            state.versions_cache[name].pop(version)
+            state.queue.append(name)
+        else:
+            by_candidate[(name, version)].append((url, metadata))
+    for (name, version), metadatas in by_candidate.items():
+        # TODO: actually check all wheels per release here
+        metadata = metadatas[0][1]
+        for url, other_metadata in metadatas:
+            assert metadata == other_metadata, (
+                name,
+                version,
+                metadatas[0][0],
+                metadata,
+                url,
+                other_metadata,
+            )
+        state.wheel_file_metadata[metadatas[0][0]] = metadata
+        state.wheel_metadata[(name, version)] = metadata
+        state.changed_metadata[(name, version)] = state.metadata_requirements[
+            (name, version)
+        ]
+        state.metadata_requirements[(name, version)] = metadata.requires_dist
+        pypi_requirements = [
+            parse_requirement_fixup(requirement, f"{name} {version}")
+            for requirement in state.pypi_metadata[(name, version)].requires_dist or []
+        ]
+        if pypi_requirements != metadata.requires_dist:
+            logger.warning(
+                f"Diverging requires_dist metadata for {name} {version}:\n"
+                f"pypi json api: {pypi_requirements}\n"
+                f"wheel metadata: {metadata.requires_dist}"
+            )
+            for removed in set(pypi_requirements) - set(metadata.requires_dist):
+                state.requirements_per_package[normalize(removed.name)].remove(
+                    (removed, (name, version))
+                )
+                if name not in state.queue:
+                    state.queue.append(name)
+            for added in set(pypi_requirements) - set(metadata.requires_dist):
+                state.requirements_per_package[normalize(added.name)].remove(
+                    (added, (name, version))
+                )
+                if name not in state.queue:
+                    state.queue.append(name)
+            if name not in state.queue:
+                state.queue.append(name)
 
 
 def freeze(resolution: Resolution, root_requirement: Requirement) -> str:
@@ -664,7 +702,8 @@ def main():
     root_requirement = Requirement("black[d,jupyter]")
     # root_requirement = Requirement("meine_stadt_transparent")
     # root_requirement = Requirement(
-    #    "transformers[torch,sentencepiece,tokenizers,torch-speech,vision,integrations,timm,torch-vision,codecarbon,accelerate,video]"
+    #    "transformers[torch,sentencepiece,tokenizers,torch-speech,vision,"
+    #    "integrations,timm,torch-vision,codecarbon,accelerate,video]"
     # )
     # root_requirement = Requirement("ibis-framework[all]")
     # root_requirement = Requirement("bio_embeddings[all]")

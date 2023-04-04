@@ -1,14 +1,19 @@
-import email.parser
 import logging
 import time
 from collections import defaultdict
-from typing import Optional, List, BinaryIO, Dict
+from typing import Optional, List, BinaryIO, Dict, Union
 from zipfile import ZipFile
 
 import httpx
 from httpx import AsyncClient
 
-from pypi_types import pypi_metadata, pypi_releases, pep440_rs, filename_to_version
+from pypi_types import (
+    pypi_metadata,
+    pypi_releases,
+    pep440_rs,
+    filename_to_version,
+    core_metadata,
+)
 from resolve_prototype.common import user_agent, normalize, Cache, NormalizedName
 
 logger = logging.getLogger(__name__)
@@ -39,7 +44,7 @@ class RemoteZipFile(BinaryIO):
         accept_ranges = response.headers.get("accept-ranges")
         assert accept_ranges == "bytes", (
             f"The server needs to `accept-ranges: bytes`, "
-            f"but it says {accept_ranges}"
+            f"but it says {accept_ranges} for {url}"
         )
         self.len = int(response.headers["content-length"])
 
@@ -93,7 +98,7 @@ async def get_releases(
     # normalize removes all dots in the name
     cached = cache.get("pypi_simple_releases", normalize(project) + ".json")
     if cached and not refresh and not cache.refresh_versions:
-        logger.info(f"Using cached releases for {url}")
+        logger.debug(f"Using cached releases for {url}")
         return parse_releases_data(project, cached)
 
     etag = cache.get("pypi_simple_releases", normalize(project) + ".etag")
@@ -157,7 +162,7 @@ def parse_releases_data(
 
 
 async def get_metadata(
-    client: AsyncClient, project: str, version: pep440_rs.Version, cache
+    client: AsyncClient, project: str, version: pep440_rs.Version, cache: Cache
 ) -> pypi_metadata.Metadata:
     url = f"https://pypi.org/pypi/{normalize(project)}/{version}/json"
 
@@ -185,37 +190,56 @@ async def get_metadata(
 
 
 def get_metadata_from_wheel(
-    name: NormalizedName, version: pep440_rs.Version, url: str, cache: Cache
-) -> pypi_metadata.Metadata:
+    name: NormalizedName,
+    version: pep440_rs.Version,
+    filename: str,
+    url: str,
+    cache: Cache,
+) -> Union[core_metadata.Metadata21, RuntimeError]:
     metadata_path = f"{name}-{version}.dist-info/METADATA"
     start = time.time()
     # By PEP 440 version must contain any slashes or other weird characters
     # TODO: check if there are any windows-unfriendly characters
     # TODO: Better cache tag
-    metadata_str = cache.get("wheel_metadata", f"{name}@{version}.metadata")
-    if not metadata_str:
-        # Create a new client because we're running in a thread
-        with httpx.Client() as client:
-            zipfile = ZipFile(RemoteZipFile(client, url))
-            try:
-                metadata_str = zipfile.read(metadata_path).decode()
-            except KeyError:
-                metadata_str = None
-                for filename in zipfile.namelist():
-                    # TODO: Check that there's actually exactly one dist info directory
-                    #       and METADATA file
-                    if filename.count("/") == 1 and filename.endswith(
-                        ".dist-info/METADATA"
-                    ):
-                        metadata_str = zipfile.read(filename).decode()
-                        break
-                if not metadata_str:
-                    logger.warning(f"Missing METADATA file for {name} {version} {url}")
-                    return pypi_metadata.Metadata.from_name_and_requires_dist(name, [])
-        cache.set("wheel_metadata", f"{name}@{version}.metadata", metadata_str)
-    metadata = email.parser.HeaderParser().parsestr(metadata_str)
+    metadata_filename = cache.get_filename(
+        "wheel_metadata", f"{filename.split('/')[0]}.metadata"
+    )
+    if metadata_filename.is_file():
+        try:
+            return core_metadata.Metadata21.read(
+                str(metadata_filename), f"{name} {version} {filename}"
+            )
+        except RuntimeError as err:
+            # Let the caller across the thread pool executor handle the call
+            return err
+
+    logger.debug(f"Querying {url}")
+    # Create a new client because we're running in a thread
+    with httpx.Client() as client:
+        zipfile = ZipFile(RemoteZipFile(client, url))
+        try:
+            metadata_bytes = zipfile.read(metadata_path)
+        except KeyError:
+            metadata_bytes = None
+            for zipped_file in zipfile.namelist():
+                # TODO: Check that there's actually exactly one dist info directory
+                #       and METADATA file
+                if zipped_file.count("/") == 1 and zipped_file.endswith(
+                    ".dist-info/METADATA"
+                ):
+                    metadata_bytes = zipfile.read(zipped_file)
+                    break
+            if not metadata_bytes:
+                raise RuntimeError(
+                    f"Missing METADATA file for {name} {version} {filename} {url}"
+                ) from None
+    cache.set(
+        "wheel_metadata", f"{filename.split('/')[0]}.metadata", metadata_bytes.decode()
+    )
     end = time.time()
     logger.debug(f"Getting metadata took {end - start:.2f}s from {url}")
-    return pypi_metadata.Metadata.from_name_and_requires_dist(
-        name, metadata.get_all("Requires-Dist")
-    )
+    try:
+        return core_metadata.Metadata21.from_bytes(metadata_bytes)
+    except RuntimeError as err:
+        # Let the caller across the thread pool executor handle the call
+        return err

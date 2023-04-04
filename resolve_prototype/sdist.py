@@ -1,4 +1,3 @@
-import json
 import logging
 import os
 import shutil
@@ -9,9 +8,8 @@ from tempfile import TemporaryDirectory
 import aiofiles
 from build import ProjectBuilder
 from httpx import AsyncClient
-from importlib_metadata import Distribution
-from pypi_types import pypi_releases, pypi_metadata
 
+from pypi_types import pypi_releases, core_metadata
 from resolve_prototype.common import user_agent, Cache
 
 logger = logging.getLogger(__name__)
@@ -60,32 +58,39 @@ async def to_thread(func, /, *args, **kwargs):
 
 async def build_sdist(
     client: AsyncClient, file: pypi_releases.File, cache: Cache
-) -> pypi_metadata.Metadata:
+) -> core_metadata.Metadata21:
     # TODO(konstin): Better cache key, outside of pypi this will cause cache collision
-    if metadata := cache.get("sdist_build_metadata", file.filename + ".METADATA.json"):
-        logger.info(f"Using cached json metadata for {file.filename}")
-    else:
-        with TemporaryDirectory() as tempdir:
-            json_metadata = await build_sdist_impl(client, file, tempdir)
+    if metadata_path := cache.get_filename(
+        "sdist_build_metadata", file.filename + ".METADATA"
+    ):
+        if metadata_path.is_file():
+            logger.debug(f"Using cached json metadata for {file.filename}")
+            metadata = core_metadata.Metadata21.read(str(metadata_path), file.filename)
+            logger.debug(f"sdist {file.filename} {metadata.requires_dist}")
+            return metadata
+
+    with TemporaryDirectory() as tempdir:
+        metadata_path = await build_sdist_impl(client, file, tempdir)
+
+        try:
+            metadata = core_metadata.Metadata21.read(str(metadata_path), file.filename)
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to parse sdist built metadata for {file.filename}, "
+                f"this is most likely a bug"
+            ) from e
         cache.set(
             "sdist_build_metadata",
-            file.filename + ".METADATA.json",
-            json.dumps(json_metadata),
+            file.filename + ".METADATA",
+            metadata_path.read_text(),
         )
-        metadata = json.dumps(json_metadata)
-
-    try:
-        metadata = pypi_metadata.parse_metadata(metadata)
-    except Exception as e:
-        raise RuntimeError(
-            f"Failed to parse sdist built metadata for {file.filename}, "
-            f"this is most likely a bug"
-        ) from e
-    logger.info(f"sdist {file.filename} {metadata.requires_dist}")
+    logger.debug(f"sdist {file.filename} {metadata.requires_dist}")
     return metadata
 
 
-async def build_sdist_impl(client: AsyncClient, file: pypi_releases.File, tempdir: str):
+async def build_sdist_impl(
+    client: AsyncClient, file: pypi_releases.File, tempdir: str
+) -> Path:
     logger.info(f"Downloading {file.filename}")
     downloaded_file = Path(tempdir).joinpath(file.filename)
     async with aiofiles.open(downloaded_file, mode="wb") as f, client.stream(
@@ -126,4 +131,4 @@ async def build_sdist_impl(client: AsyncClient, file: pypi_releases.File, tempdi
     [dist_info] = filter(
         lambda x: x.name.endswith(".dist-info"), metadata_dir.iterdir()
     )
-    return Distribution.at(dist_info).metadata.json
+    return dist_info.joinpath("METADATA")

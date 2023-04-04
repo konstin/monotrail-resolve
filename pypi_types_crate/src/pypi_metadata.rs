@@ -1,3 +1,5 @@
+//! For data from e.g. <https://pypi.org/pypi/tqdm/4.65.0/json>
+
 use crate::Opaque;
 use pyo3::basic::CompareOp;
 use pyo3::exceptions::PyNotImplementedError;
