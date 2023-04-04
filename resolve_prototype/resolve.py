@@ -718,7 +718,7 @@ def main():
     )
     print(freeze(resolution, root_requirement))
     end = time.time()
-    print(f"Took {end - start:.2}s")
+    print(f"Took {end - start:.2f}s")
 
 
 if __name__ == "__main__":

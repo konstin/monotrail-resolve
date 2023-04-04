@@ -1,6 +1,7 @@
 import logging
 import os
 import shutil
+import time
 from pathlib import Path
 from subprocess import CalledProcessError, run
 from tempfile import TemporaryDirectory
@@ -93,12 +94,14 @@ async def build_sdist_impl(
 ) -> Path:
     logger.info(f"Downloading {file.filename}")
     downloaded_file = Path(tempdir).joinpath(file.filename)
+    start = time.time()
     async with aiofiles.open(downloaded_file, mode="wb") as f, client.stream(
         "GET", file.url, headers={"user-agent": user_agent}
     ) as response:
         async for chunk in response.aiter_bytes():
             await f.write(chunk)
-    logger.info(f"Extracting {file.filename}")
+    end = time.time()
+    logger.info(f"Downloading {file.filename} took {end - start:.2f}s, extracting")
     extracted = Path(tempdir).joinpath("extracted")
     await to_thread(shutil.unpack_archive, downloaded_file, extracted)
     try:
@@ -109,6 +112,7 @@ async def build_sdist_impl(
     logger.info(f"Building {file.filename}")
     metadata_dir = Path(tempdir).joinpath("metadata")
     capture = ProjectHooksCaptureOutput()
+    start = time.time()
     try:
         await to_thread(
             lambda: ProjectBuilder(
@@ -127,7 +131,8 @@ async def build_sdist_impl(
             f"Messages from building {file.filename}:\n---"
             f" stderr:\n{capture.stderr.strip()}\n---\n"
         )
-    logger.info(f"Finished {file.filename}")
+    end = time.time()
+    logger.info(f"Building {file.filename} took {end - start:.2f}")
     [dist_info] = filter(
         lambda x: x.name.endswith(".dist-info"), metadata_dir.iterdir()
     )
