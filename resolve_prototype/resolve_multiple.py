@@ -21,7 +21,7 @@ def main():
     args = parser.parse_args()
     print(args.requirement)
 
-    for _ in range(10):
+    for _ in range(30):
         for requirement in args.requirement:
             root_requirement = Requirement(requirement)
             resolution: Resolution = asyncio.run(

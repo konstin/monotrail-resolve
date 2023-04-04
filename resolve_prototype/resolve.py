@@ -43,6 +43,7 @@ import logging
 import re
 import sys
 import time
+from argparse import ArgumentParser
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, Executor
 from dataclasses import dataclass
@@ -699,7 +700,13 @@ def main():
     logging.basicConfig(level=logging.INFO)
     logging.captureWarnings(True)
 
-    root_requirement = Requirement("black[d,jupyter]")
+    parser = ArgumentParser()
+    parser.add_argument("--refresh-versions", action="store_true")
+    parser.add_argument("--requires-python", default=">= 3.7")
+    parser.add_argument("requirement")
+    args = parser.parse_args()
+
+    root_requirement = Requirement(args.requirement)
     # root_requirement = Requirement("meine_stadt_transparent")
     # root_requirement = Requirement(
     #    "transformers[torch,sentencepiece,tokenizers,torch-speech,vision,"
@@ -708,13 +715,17 @@ def main():
     # root_requirement = Requirement("ibis-framework[all]")
     # root_requirement = Requirement("bio_embeddings[all]")
 
-    requires_python = VersionSpecifier(">= 3.7")
+    requires_python = VersionSpecifier(args.requires_python)
 
     if len(sys.argv) == 2:
         root_requirement = Requirement(sys.argv[1])
     start = time.time()
     resolution: Resolution = asyncio.run(
-        resolve(root_requirement, requires_python, Cache(default_cache_dir))
+        resolve(
+            root_requirement,
+            requires_python,
+            Cache(default_cache_dir, refresh_versions=args.refresh_versions),
+        )
     )
     print(freeze(resolution, root_requirement))
     end = time.time()
