@@ -47,7 +47,7 @@ from argparse import ArgumentParser
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, Executor
 from dataclasses import dataclass
-from typing import List, Dict, Tuple, Set, Type
+from typing import List, Dict, Tuple, Set, Type, Iterable, Union
 from typing import Optional
 
 import httpx
@@ -120,21 +120,21 @@ class State:
     resolved_sdists: Set[Tuple[NormalizedName, Version]]
 
     # package name -> list of versions and the files (sdist and wheel only) from pypi
-    versions_cache: Dict[str, Dict[Version, List[pypi_releases.File]]]
-    # The requirements, either from wheel_metadata, or if that isn't available,
-    # from pypi_metadata. Extra fields because there can be parsing errors with
-    # the pypi metadata
-    metadata_requirements: Dict[Tuple[str, Version], List[Requirement]]
+    versions_cache: Dict[NormalizedName, Dict[Version, List[pypi_releases.File]]]
+    # The requirements for specific package version, either from wheel_metadata, or if
+    # that isn't available (yet),from pypi_metadata. Extra fields because there can be
+    # parsing errors with the pypi metadata
+    metadata_requirements: Dict[Tuple[NormalizedName, Version], List[Requirement]]
     # (package name, package version) -> pypi metadata, possibly wrong given
     # wheel_metadata
-    pypi_metadata: Dict[Tuple[str, Version], pypi_metadata.Metadata]
+    pypi_metadata: Dict[Tuple[NormalizedName, Version], pypi_metadata.Metadata]
     # (package name, package version) -> metadata from a while from pypi
-    wheel_metadata: Dict[Tuple[str, Version], core_metadata.Metadata21]
+    wheel_metadata: Dict[Tuple[NormalizedName, Version], core_metadata.Metadata21]
     # (wheel filename) -> METADATA contents
     wheel_file_metadata: Dict[str, core_metadata.Metadata21]
     # Reprocess this even if the version stayed the same
     # Stores a list of the old requirements so we can remove them
-    changed_metadata: Dict[Tuple[str, Version], List[Requirement]]
+    changed_metadata: Dict[Tuple[NormalizedName, Version], List[Requirement]]
     # Reverse mapping: package name -> requirements. Without version since those are
     # the ones we determine the version from
     requirements_per_package: Dict[
@@ -170,6 +170,29 @@ class State:
             self.requirements_per_package[name] = {
                 (requirement, ("(user specified)", Version("0")))
             }
+
+    @staticmethod
+    def assert_list_normalization(data: Iterable[Union[str, NormalizedName]]):
+        for entry in data:
+            assert entry == normalize(entry), entry
+
+    def assert_normalization(self):
+        """ :/ """
+        self.assert_list_normalization(self.user_constraints.keys())
+        self.assert_list_normalization(self.queue)
+        self.assert_list_normalization(self.fetch_versions)
+        self.assert_list_normalization(self.fetch_metadata.keys())
+        self.assert_list_normalization([i[0] for i in self.resolved_sdists])
+        self.assert_list_normalization([i[0] for i in self.versions_cache])
+        self.assert_list_normalization([i[0] for i in self.versions_cache])
+        self.assert_list_normalization(
+            [i[0] for i in self.metadata_requirements.keys()]
+        )
+        self.assert_list_normalization([i[0] for i in self.pypi_metadata.keys()])
+        self.assert_list_normalization([i[0] for i in self.wheel_metadata.keys()])
+        self.assert_list_normalization([i[0] for i in self.changed_metadata.keys()])
+        self.assert_list_normalization(self.requirements_per_package.keys())
+        self.assert_list_normalization(self.candidates.keys())
 
 
 @dataclass
@@ -630,10 +653,13 @@ async def resolve(
     start = time.time()
 
     while True:
+        # We have packages for which we need to recompute the candidate
         while state.queue:
+             # state.assert_normalization()
             name = state.queue.pop(0)
             await update_single_package(state, name, maximum_versions, python_versions)
 
+        # Log the current set of candidates
         candidates_fmt = " ".join(
             [
                 f"{name}{'[' + ','.join(extras) + ']' if extras else ''}=={version}"
@@ -641,10 +667,16 @@ async def resolve(
             ]
         )
         logger.info(f"Candidates: {candidates_fmt}")
+
+        # With have likely delay some packages because we're lacking the metadata,
+        # but we want to fetch all metadata for each category at once.
+        # This is the fastest to fetch metadata because we're just getting JSON
+        # from a CDN
         if state.fetch_versions or state.fetch_metadata:
             await fetch_versions_and_metadata(state, cache, transport)
 
-        # Do everything else first before we do the slow sdist part
+        # Compute candidates again first before we do the slow METADATA and sdist part,
+        # maybe we get better candidates already
         if state.queue:
             # Make the resolution deterministic and easier to understand from the logs
             state.queue.sort()
@@ -654,21 +686,22 @@ async def resolve(
         if download_wheels:
             query_wheel_metadata(state, cache)
 
-        # We found some missing requires_dist, we can resolve further before building
-        # sdists
+        # We found some METADSTA for missing requires_dist, we can resolve further
+        # before building sdists
         if state.queue:
             state.queue.sort()
             continue
 
+        # Everything else is resolved, time for the slowest part:
         # Do we have sdist for which we don't know the metadata yet?
         sdists = await find_sdists_for_build(state)
-
         if sdists:
             await build_sdists(state, cache, sdists, transport)
-        else:
-            # This is when we know we're done, everything is resolved and all metadata
-            # is the best it can be
-            break
+            continue
+
+        # This is when we know we're done, everything is resolved and all metadata
+        # is the best it can be
+        break
 
     end = time.time()
     print(f"resolution ours took {end - start:.3f}s")

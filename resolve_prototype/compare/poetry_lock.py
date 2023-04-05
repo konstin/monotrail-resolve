@@ -56,7 +56,7 @@ def poetry_resolve(
     )
     start = time.time()
     extras_args = []
-    for extra in root_requirement.extras:
+    for extra in root_requirement.extras or []:
         extras_args.extend(["-E", extra])
     check_call(
         ["poetry", "add", "--lock", root_requirement.name, "-vvv"] + extras_args,
