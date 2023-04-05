@@ -52,7 +52,7 @@ from typing import Optional
 
 import httpx
 import tomli_w
-from httpx import AsyncClient
+from httpx import AsyncClient, AsyncBaseTransport
 
 from pypi_types import pypi_releases, pypi_metadata, core_metadata
 from pypi_types.pep440_rs import Version, VersionSpecifier
@@ -270,295 +270,6 @@ class Resolution:
         return Resolution(root=env_root, package_data=env_package_data)
 
 
-async def resolve(
-    root_requirement: Requirement,
-    requires_python: VersionSpecifier,
-    cache: Cache,
-    download_wheels: bool = True,
-    maximum_versions: bool = True,
-    executor: Type[Executor] = ThreadPoolExecutor,
-) -> Resolution:
-    transport = httpx.AsyncHTTPTransport(retries=3)
-
-    # Generate list of compatible python versions for shrinking down the list of
-    # dependencies. This is done to avoid implementing PEP 440 version specifier
-    # intersections on both left hand and right hand between `requires_python` and the
-    # markers
-    python_versions = []
-    for minor in range(MINIMUM_SUPPORTED_PYTHON_MINOR, 101):
-        version = Version(f"3.{minor}")
-        if version in requires_python:
-            python_versions.append(version)
-    if Version("4.0") in requires_python:
-        python_versions.append(Version("4.0"))
-
-    state = State(root_requirement, executor)
-
-    start = time.time()
-
-    while True:
-        while state.queue:
-            name = state.queue.pop(0)
-            # We've had this branch before but the version data isn't there yet
-            if name in state.fetch_versions:
-                continue
-
-            logger.debug(f"Processing {name}")
-            # First time we're encountering this package?
-            if name not in state.versions_cache:
-                logger.debug(f"Missing versions for {name}, delaying")
-                state.fetch_versions.add(name)
-                continue
-
-            # Apply all requirements and find the highest (given `maximum_versions`)
-            # possible version
-            new_version = None
-            new_extras: Set[str] = set()
-            for version in sorted(
-                state.versions_cache[name].keys(), reverse=maximum_versions
-            ):
-                # TODO: proper prerelease handling (i.e. check the specifiers if they
-                #  have consensus over pulling specific prerelease ranges in)
-                if version.any_prerelease():
-                    continue
-                is_compatible = True
-                extras: Set[str] = set()
-
-                for requirement, _source in state.requirements_per_package[name]:
-                    extras.update(set(requirement.extras or []))
-                    if not requirement.version_or_url:
-                        continue
-                    for specifier in requirement.version_or_url:
-                        if not specifier.contains(version):
-                            is_compatible = False
-                            break
-                if is_compatible:
-                    new_version = version
-                    new_extras = extras
-                    break
-
-            # TODO: Actually backtrack (pubgrub?)
-            if not new_version:
-                raise RuntimeError(
-                    f"No compatible version for {name}.\n"
-                    f"Constraints: {state.requirements_per_package[name]}.\n"
-                    f"Versions: {sorted(state.versions_cache[name].keys())}"
-                )
-
-            # If we had the same constraints
-            if (name, new_version) in state.changed_metadata:
-                changed_requirement = state.changed_metadata.pop((name, new_version))
-                logger.debug(f"New wheel metadata for {name} {new_version}")
-            else:
-                changed_requirement = None
-            old_version, old_extras = state.candidates.get(name, (None, None))
-            if new_version == old_version and new_extras == old_extras:
-                if changed_requirement is None:
-                    logger.info(f"No changes for {name}")
-                    continue
-            else:
-                if old_version:
-                    logger.info(
-                        f"Picking {name} {new_version} {new_extras} over"
-                        f" {old_version} {old_extras}"
-                    )
-                else:
-                    logger.debug(f"Picking {name} {new_version} {new_extras}")
-
-            # Do we actually already know the requires_dist for this new candidate?
-            if (name, new_version) not in state.pypi_metadata:
-                logger.debug(f"Missing metadata for {name} {new_version}, delaying")
-                # If we had chosen a higher version to fetch in previous iteration,
-                # overwrite
-                state.fetch_metadata[normalize(name)] = new_version
-                continue
-
-            state.candidates[name] = (new_version, new_extras)
-
-            # Update the outgoing edges
-            if old_version:
-                if changed_requirement is not None:
-                    old_requirements = changed_requirement
-                else:
-                    old_requirements = state.metadata_requirements[(name, old_version)]
-                for old in old_requirements:
-                    if not old.evaluate_extras_and_python_version(
-                        old_extras, python_versions
-                    ):
-                        continue
-                    # We always need to remove all of them since the version always
-                    # changed
-                    state.requirements_per_package[normalize(old.name)].remove(
-                        (old, (name, old_version))
-                    )
-
-                    if normalize(old.name) not in state.queue:
-                        logger.debug(f"Queuing {normalize(old.name)}")
-                        state.queue.append(normalize(old.name))
-            else:
-                old_requirements = []
-
-            for new in state.metadata_requirements[(name, new_version)]:
-                if not new.evaluate_extras_and_python_version(
-                    new_extras, python_versions
-                ):
-                    continue
-                state.requirements_per_package[normalize(new.name)].add(
-                    (new, (name, new_version))
-                )
-                # Same requirement might be in two version of a package, otherwise
-                # we need to recompute it
-                if (
-                    new not in old_requirements
-                    and normalize(new.name) not in state.queue
-                ):
-                    logger.debug(f"Queuing {normalize(new.name)}")
-                    state.queue.append(normalize(new.name))
-
-        candidates_fmt = " ".join(
-            [
-                f"{name}{'[' + ','.join(extras) + ']' if extras else ''}=={version}"
-                for name, (version, extras) in sorted(state.candidates.items())
-            ]
-        )
-        logger.info(f"Candidates: {candidates_fmt}")
-        if state.fetch_versions or state.fetch_metadata:
-            logger.info(
-                f"Fetching versions for {len(state.fetch_versions)} project(s) and "
-                f"metadata for {len(state.fetch_metadata)} version(s)"
-            )
-
-        async with AsyncClient(http2=True, transport=transport) as client:
-            projects_releases = await asyncio.gather(
-                *[
-                    get_releases(client, name, cache)
-                    for name in sorted(state.fetch_versions)
-                ]
-            )
-        state.versions_cache.update(
-            dict(zip(sorted(state.fetch_versions), projects_releases))
-        )
-        # we got the info where we delayed previously, now actually compute a candidate
-        # version
-        state.queue.extend(state.fetch_versions)
-        state.fetch_versions.clear()
-
-        # noinspection PyTypeChecker
-        fetch_metadata_sorted: List[Tuple[str, Version]] = sorted(
-            state.fetch_metadata.items()
-        )
-        async with AsyncClient(http2=True, transport=transport) as client:
-            projects_metadata = await asyncio.gather(
-                *[
-                    get_metadata(client, name, version, cache)
-                    for name, version in fetch_metadata_sorted
-                ]
-            )
-
-        for (name, version), metadata in zip(fetch_metadata_sorted, projects_metadata):
-            try:
-                state.metadata_requirements[(name, version)] = [
-                    parse_requirement_fixup(requirement, f"{name} {version}")
-                    for requirement in metadata.requires_dist or []
-                ]
-            except Pep508Error as err:
-                logger.warning(
-                    f"Invalid requirements for {name} {version}, "
-                    f"skipping this release: {err}"
-                )
-                # Take this version out of the rotation
-                state.versions_cache[name].pop(version)
-                if name not in state.queue:
-                    state.queue.append(name)
-            state.pypi_metadata[(name, version)] = metadata
-        # we got the info where we delayed previously, now actually propagate those
-        # requirements
-        state.queue.extend(set(state.fetch_metadata) - set(state.queue))
-        state.fetch_metadata.clear()
-
-        # Make the resolution deterministic and easier to understand from the logs
-        state.queue.sort()
-        # Do everything else first before we do the slow sdist part
-        if state.queue:
-            continue
-
-        # Allow to skip this step
-        if download_wheels:
-            query_wheel_metadata(state, cache)
-
-        # We found some missing requires_dist, we can resolve further before building
-        # sdists
-        if state.queue:
-            continue
-
-        # Do we have sdist for which we don't know the metadata yet?
-        sdists: List[Tuple[NormalizedName, Version, pypi_releases.File]] = []
-        for name, (version, _extras) in state.candidates.items():
-            if (name, version) in state.resolved_sdists:
-                continue
-            if not any(
-                file.filename.endswith(".whl")
-                for file in state.versions_cache[name][version]
-            ):
-                try:
-                    [sdist] = state.versions_cache[name][version]
-                except ValueError:
-                    sdist_list = [
-                        file.filename for file in state.versions_cache[name][version]
-                    ]
-                    raise RuntimeError(
-                        f"Expected exactly one sdist, found {sdist_list}"
-                    ) from None
-                sdists.append((name, version, sdist))
-
-        # This is when we know we're done, everything is resolved
-        if not sdists:
-            break
-
-        # Download and PEP 517 query sdists for metadata
-        logger.info(
-            f"Building {[f'{name} {version}' for (name, version, _filename) in sdists]}"
-        )
-        async with AsyncClient(http2=True, transport=transport) as client:
-            metadatas = await asyncio.gather(
-                *[build_sdist(client, sdist[2], cache) for sdist in sdists]
-            )
-        for (name, version, _filename), metadata in sorted(zip(sdists, metadatas)):
-            state.wheel_metadata[(name, version)] = metadata
-            state.metadata_requirements[(name, version)] = metadata.requires_dist
-            state.changed_metadata[(name, version)] = state.metadata_requirements[
-                (name, version)
-            ]
-            state.resolved_sdists.add((name, version))
-            if name not in state.queue:
-                state.queue.append(name)
-
-            for added in sorted(metadata.requires_dist, key=str):
-                state.requirements_per_package[normalize(added.name)].add(
-                    (added, (name, version))
-                )
-                if normalize(added.name) not in state.queue:
-                    state.queue.append(normalize(added.name))
-
-    end = time.time()
-    print(f"resolution ours took {end - start:.3f}s")
-
-    package_data = {}
-    for name, (version, _extras) in sorted(state.candidates.items()):
-        package_data[(name, version)] = ReleaseData(
-            unnormalized_name=state.pypi_metadata[(name, version)].name,
-            requirements=state.metadata_requirements[(name, version)],
-            # Currently, we only use the wheel metadata if the pypi requires_dist was
-            # empty
-            metadata=state.wheel_metadata.get((name, version))
-            or state.pypi_metadata[(name, version)],
-            files=state.versions_cache[name][version],
-            extras=state.candidates[name][1],
-        )
-
-    return Resolution([root_requirement], package_data)
-
-
 def query_wheel_metadata(state: State, cache: Cache):
     """Actually download the wheel metadata from the exact section of the zip.
 
@@ -666,6 +377,316 @@ def query_wheel_metadata(state: State, cache: Cache):
                     state.queue.append(name)
             if name not in state.queue:
                 state.queue.append(name)
+
+
+async def update_single_package(
+    state: State,
+    name: NormalizedName,
+    maximum_versions: bool,
+    python_versions: List[Version],
+):
+    """Processes a single package, normally resolving it into a version
+    Steps:
+     * Check that we have the versions of the package (or delay)
+     * Pick a compatible version (or error - no backtracking yet)
+     * Check that we have the metadata for the version (or delay)
+     * Update state.requirements_per_package
+     * Queue all packages affected by changes
+    """
+    # We've had this branch before but the version data isn't there yet
+    if name in state.fetch_versions:
+        return
+    logger.debug(f"Processing {name}")
+    # First time we're encountering this package?
+    if name not in state.versions_cache:
+        logger.debug(f"Missing versions for {name}, delaying")
+        state.fetch_versions.add(name)
+        return
+    # Apply all requirements and find the highest (given `maximum_versions`)
+    # possible version
+    new_version = None
+    new_extras: Set[str] = set()
+    for version in sorted(state.versions_cache[name].keys(), reverse=maximum_versions):
+        # TODO: proper prerelease handling (i.e. check the specifiers if they
+        #  have consensus over pulling specific prerelease ranges in)
+        if version.any_prerelease():
+            continue
+        is_compatible = True
+        extras: Set[str] = set()
+
+        for requirement, _source in state.requirements_per_package[name]:
+            extras.update(set(requirement.extras or []))
+            if not requirement.version_or_url:
+                continue
+            for specifier in requirement.version_or_url:
+                if not specifier.contains(version):
+                    is_compatible = False
+                    break
+        if is_compatible:
+            new_version = version
+            new_extras = extras
+            break
+    # TODO: Actually backtrack (pubgrub?)
+    if not new_version:
+        raise RuntimeError(
+            f"No compatible version for {name}.\n"
+            f"Constraints: {state.requirements_per_package[name]}.\n"
+            f"Versions: {sorted(state.versions_cache[name].keys())}"
+        )
+    # If we had the same constraints
+    if (name, new_version) in state.changed_metadata:
+        changed_requirement = state.changed_metadata.pop((name, new_version))
+        logger.debug(f"New wheel metadata for {name} {new_version}")
+    else:
+        changed_requirement = None
+    old_version, old_extras = state.candidates.get(name, (None, None))
+    if new_version == old_version and new_extras == old_extras:
+        if changed_requirement is None:
+            logger.info(f"No changes for {name}")
+            return
+    else:
+        if old_version:
+            logger.info(
+                f"Picking {name} {new_version} {new_extras} over"
+                f" {old_version} {old_extras}"
+            )
+        else:
+            logger.debug(f"Picking {name} {new_version} {new_extras}")
+    # Do we actually already know the requires_dist for this new candidate?
+    if (name, new_version) not in state.pypi_metadata:
+        logger.debug(f"Missing metadata for {name} {new_version}, delaying")
+        # If we had chosen a higher version to fetch in previous iteration,
+        # overwrite
+        state.fetch_metadata[normalize(name)] = new_version
+        return
+    state.candidates[name] = (new_version, new_extras)
+    # Update the outgoing edges
+    if old_version:
+        if changed_requirement is not None:
+            old_requirements = changed_requirement
+        else:
+            old_requirements = state.metadata_requirements[(name, old_version)]
+        for old in old_requirements:
+            if not old.evaluate_extras_and_python_version(old_extras, python_versions):
+                continue
+            # We always need to remove all of them since the version always
+            # changed
+            state.requirements_per_package[normalize(old.name)].remove(
+                (old, (name, old_version))
+            )
+
+            if normalize(old.name) not in state.queue:
+                logger.debug(f"Queuing {normalize(old.name)}")
+                state.queue.append(normalize(old.name))
+    else:
+        old_requirements = []
+    for new in state.metadata_requirements[(name, new_version)]:
+        if not new.evaluate_extras_and_python_version(new_extras, python_versions):
+            continue
+        state.requirements_per_package[normalize(new.name)].add(
+            (new, (name, new_version))
+        )
+        # Same requirement might be in two version of a package, otherwise
+        # we need to recompute it
+        if new not in old_requirements and normalize(new.name) not in state.queue:
+            logger.debug(f"Queuing {normalize(new.name)}")
+            state.queue.append(normalize(new.name))
+
+
+async def build_sdists(
+    state: State,
+    cache: Cache,
+    sdists: List[Tuple[NormalizedName, Version, pypi_releases.File]],
+    transport: AsyncBaseTransport,
+):
+    # Download and PEP 517 query sdists for metadata
+    logger.info(
+        f"Building {[f'{name} {version}' for (name, version, _filename) in sdists]}"
+    )
+    async with AsyncClient(http2=True, transport=transport) as client:
+        metadatas = await asyncio.gather(
+            *[build_sdist(client, sdist[2], cache) for sdist in sdists]
+        )
+    for (name, version, _filename), metadata in sorted(zip(sdists, metadatas)):
+        state.wheel_metadata[(name, version)] = metadata
+        state.metadata_requirements[(name, version)] = metadata.requires_dist
+        state.changed_metadata[(name, version)] = state.metadata_requirements[
+            (name, version)
+        ]
+        state.resolved_sdists.add((name, version))
+        if name not in state.queue:
+            state.queue.append(name)
+
+        for added in sorted(metadata.requires_dist, key=str):
+            state.requirements_per_package[normalize(added.name)].add(
+                (added, (name, version))
+            )
+            if normalize(added.name) not in state.queue:
+                state.queue.append(normalize(added.name))
+
+
+async def find_sdists_for_build(
+    state: State,
+) -> List[Tuple[NormalizedName, Version, pypi_releases.File]]:
+    sdists = []
+    for name, (version, _extras) in state.candidates.items():
+        if (name, version) in state.resolved_sdists:
+            continue
+        if not any(
+            file.filename.endswith(".whl")
+            for file in state.versions_cache[name][version]
+        ):
+            try:
+                [sdist] = state.versions_cache[name][version]
+            except ValueError:
+                sdist_list = [
+                    file.filename for file in state.versions_cache[name][version]
+                ]
+                raise RuntimeError(
+                    f"Expected exactly one sdist, found {sdist_list}"
+                ) from None
+            sdists.append((name, version, sdist))
+    return sdists
+
+
+async def fetch_versions_and_metadata(
+    state: State, cache: Cache, transport: AsyncBaseTransport
+):
+    logger.info(
+        f"Fetching versions for {len(state.fetch_versions)} project(s) and "
+        f"metadata for {len(state.fetch_metadata)} version(s)"
+    )
+    # noinspection PyTypeChecker
+    state.fetch_metadata = dict(sorted(state.fetch_metadata.items()))
+    async with AsyncClient(http2=True, transport=transport) as client:
+        projects_releases = await asyncio.gather(
+            *[
+                get_releases(client, name, cache)
+                for name in sorted(state.fetch_versions)
+            ]
+        )
+        projects_metadata = await asyncio.gather(
+            *[
+                get_metadata(client, name, version, cache)
+                for name, version in state.fetch_metadata.items()
+            ]
+        )
+    state.versions_cache.update(
+        dict(zip(sorted(state.fetch_versions), projects_releases))
+    )
+    # we got the info where we delayed previously, now actually compute a candidate
+    # version
+    state.queue.extend(state.fetch_versions)
+    state.fetch_versions.clear()
+
+    for (name, version), metadata in zip(
+        state.fetch_metadata.items(), projects_metadata
+    ):
+        try:
+            state.metadata_requirements[(name, version)] = [
+                parse_requirement_fixup(requirement, f"{name} {version}")
+                for requirement in metadata.requires_dist or []
+            ]
+        except Pep508Error as err:
+            logger.warning(
+                f"Invalid requirements for {name} {version}, "
+                f"skipping this release: {err}"
+            )
+            # Take this version out of the rotation
+            state.versions_cache[name].pop(version)
+            if name not in state.queue:
+                state.queue.append(name)
+        state.pypi_metadata[(name, version)] = metadata
+    # we got the info where we delayed previously, now actually propagate those
+    # requirements
+    state.queue.extend(set(state.fetch_metadata) - set(state.queue))
+    state.fetch_metadata.clear()
+
+
+async def resolve(
+    root_requirement: Requirement,
+    requires_python: VersionSpecifier,
+    cache: Cache,
+    download_wheels: bool = True,
+    maximum_versions: bool = True,
+    executor: Type[Executor] = ThreadPoolExecutor,
+) -> Resolution:
+    transport = httpx.AsyncHTTPTransport(retries=3)
+
+    # Generate list of compatible python versions for shrinking down the list of
+    # dependencies. This is done to avoid implementing PEP 440 version specifier
+    # intersections on both left hand and right hand between `requires_python` and the
+    # markers
+    python_versions = []
+    for minor in range(MINIMUM_SUPPORTED_PYTHON_MINOR, 101):
+        version = Version(f"3.{minor}")
+        if version in requires_python:
+            python_versions.append(version)
+    if Version("4.0") in requires_python:
+        python_versions.append(Version("4.0"))
+
+    state = State(root_requirement, executor)
+
+    start = time.time()
+
+    while True:
+        while state.queue:
+            name = state.queue.pop(0)
+            await update_single_package(state, name, maximum_versions, python_versions)
+
+        candidates_fmt = " ".join(
+            [
+                f"{name}{'[' + ','.join(extras) + ']' if extras else ''}=={version}"
+                for name, (version, extras) in sorted(state.candidates.items())
+            ]
+        )
+        logger.info(f"Candidates: {candidates_fmt}")
+        if state.fetch_versions or state.fetch_metadata:
+            await fetch_versions_and_metadata(state, cache, transport)
+
+        # Do everything else first before we do the slow sdist part
+        if state.queue:
+            # Make the resolution deterministic and easier to understand from the logs
+            state.queue.sort()
+            continue
+
+        # Allow to skip this step
+        if download_wheels:
+            query_wheel_metadata(state, cache)
+
+        # We found some missing requires_dist, we can resolve further before building
+        # sdists
+        if state.queue:
+            state.queue.sort()
+            continue
+
+        # Do we have sdist for which we don't know the metadata yet?
+        sdists = await find_sdists_for_build(state)
+
+        if sdists:
+            await build_sdists(state, cache, sdists, transport)
+        else:
+            # This is when we know we're done, everything is resolved and all metadata
+            # is the best it can be
+            break
+
+    end = time.time()
+    print(f"resolution ours took {end - start:.3f}s")
+
+    package_data = {}
+    for name, (version, _extras) in sorted(state.candidates.items()):
+        package_data[(name, version)] = ReleaseData(
+            unnormalized_name=state.pypi_metadata[(name, version)].name,
+            requirements=state.metadata_requirements[(name, version)],
+            # Currently, we only use the wheel metadata if the pypi requires_dist was
+            # empty
+            metadata=state.wheel_metadata.get((name, version))
+            or state.pypi_metadata[(name, version)],
+            files=state.versions_cache[name][version],
+            extras=state.candidates[name][1],
+        )
+
+    return Resolution([root_requirement], package_data)
 
 
 def freeze(resolution: Resolution, root_requirement: Requirement) -> str:
