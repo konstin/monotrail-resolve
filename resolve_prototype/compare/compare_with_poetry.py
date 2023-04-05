@@ -1,16 +1,17 @@
 import asyncio
 import logging
 import sys
+from subprocess import check_call
 from typing import Dict, Tuple
 
 from pypi_types import pep508_rs
 from pypi_types.pep440_rs import VersionSpecifier
-
 from resolve_prototype.common import Cache, default_cache_dir
 from resolve_prototype.compare.poetry_lock import (
     poetry_dir,
     poetry_resolve,
     read_poetry_requirements_current,
+    poetry_export,
 )
 from resolve_prototype.resolve import resolve, Resolution
 
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 def compare_with_poetry(
-    root_requirement: pep508_rs.Requirement,
+    root_requirement: pep508_rs.Requirement, refresh: bool = False
 ) -> Tuple[Dict[str, str], Dict[str, str]]:
     # noinspection PyArgumentList
     env = pep508_rs.MarkerEnvironment.current()
@@ -26,6 +27,17 @@ def compare_with_poetry(
     if not poetry_dir(root_requirement).is_dir():
         logger.info(f"Resolving {root_requirement} with poetry")
         _poetry_all, poetry_current = poetry_resolve(root_requirement)
+    elif refresh:
+        logger.info(
+            f"Refreshing poetry resolution for {root_requirement} "
+            f"from {poetry_dir(root_requirement)}"
+        )
+        work_dir = poetry_dir(root_requirement)
+        check_call(
+            ["poetry", "update", "--lock", "-v"],
+            cwd=work_dir,
+        )
+        _poetry_all, poetry_current = poetry_export(root_requirement, work_dir)
     else:
         logger.info(
             f"Reusing poetry resolution for {root_requirement} "
@@ -37,7 +49,11 @@ def compare_with_poetry(
         f"=={sys.version_info.major}.{sys.version_info.minor}"
     )
     ours_resolution: Resolution = asyncio.run(
-        resolve(root_requirement, requires_python, Cache(default_cache_dir))
+        resolve(
+            root_requirement,
+            requires_python,
+            Cache(default_cache_dir, refresh_versions=refresh),
+        )
     )
     ours_resolution_env: Resolution = ours_resolution.for_environment(env, [])
     poetry_current = {

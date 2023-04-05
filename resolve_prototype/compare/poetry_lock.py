@@ -7,16 +7,16 @@ from typing import List, Tuple
 
 import packaging.requirements
 
-from pypi_types import pep508_rs
+from pypi_types.pep508_rs import Requirement
 from resolve_prototype.compare.common import resolutions_poetry
 
 
-def poetry_dir(root_requirement: pep508_rs.Requirement) -> Path:
+def poetry_dir(root_requirement: Requirement) -> Path:
     return resolutions_poetry.joinpath(str(root_requirement))
 
 
 def read_poetry_requirements_current(
-    root_requirement: pep508_rs.Requirement,
+    root_requirement: Requirement,
 ) -> List[Tuple[str, str]]:
     """Reads the exported poetry requirements filtered down to the current
     environment"""
@@ -33,7 +33,7 @@ def read_poetry_requirements_current(
 
 
 def poetry_resolve(
-    root_requirement: pep508_rs.Requirement,
+    root_requirement: Requirement,
 ) -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]]]:
     """Creates the whole thing anew each time"""
     assert "/" not in str(root_requirement)
@@ -59,11 +59,17 @@ def poetry_resolve(
     for extra in root_requirement.extras or []:
         extras_args.extend(["-E", extra])
     check_call(
-        ["poetry", "add", "--lock", root_requirement.name, "-vvv"] + extras_args,
+        ["poetry", "add", "--lock", root_requirement.name, "-v"] + extras_args,
         cwd=work_dir,
     )
     end = time.time()
     print(f"resolution poetry took {end - start:.3f}s")
+    return poetry_export(root_requirement, work_dir)
+
+
+def poetry_export(
+    root_requirement: Requirement, work_dir: Path
+) -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]]]:
     check_call(
         [
             "poetry",
@@ -74,7 +80,6 @@ def poetry_resolve(
         ],
         cwd=work_dir,
     )
-
     # We don't actually read to lockfile but the requirements.txt so we can parse it
     # with python packaging to catch bugs in our env/marker implementation
     requirements_txt = poetry_dir(root_requirement).joinpath("requirements.txt")
@@ -89,17 +94,15 @@ def poetry_resolve(
         if requirement.marker.evaluate():
             # packaging doesn't give us the version
             name_version_current.append((requirement.name, version))
-
     frozen = "".join([f"{name}=={version}\n" for name, version in name_version_current])
     resolutions_poetry.joinpath(str(root_requirement)).joinpath(
         "requirements_current.txt"
     ).write_text(frozen)
-
     return name_version_all, name_version_current
 
 
 def main():
-    root_requirement = pep508_rs.Requirement(sys.argv[1])
+    root_requirement = Requirement(sys.argv[1])
     poetry_resolve(root_requirement)
     print(
         resolutions_poetry.joinpath(str(root_requirement))

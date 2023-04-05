@@ -32,7 +32,8 @@ pytest
 ```
 
 ```shell
-python -m resolve_prototype.compare.pip_compare_all
+python -m resolve_prototype.compare.compare_all pip
+python -m resolve_prototype.compare.compare_all poetry
 ```
 
 ## Profiling and benchmarking

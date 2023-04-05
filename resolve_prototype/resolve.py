@@ -437,7 +437,7 @@ async def update_single_package(
         is_compatible = True
         extras: Set[str] = set()
 
-        print(name, version, state.requirements_per_package[name])
+        logger.debug(name, version, state.requirements_per_package[name])
         for requirement, _source in state.requirements_per_package[name]:
             extras.update(set(requirement.extras or []))
             if not requirement.version_or_url:
