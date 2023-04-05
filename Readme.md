@@ -1,10 +1,13 @@
 # Fast Python Dependency Resolution
 
-Run `poetry install`. Install the Python packages for [pep508_rs](https://github.com/konstin/pep508_rs) and [pypi_types](pypi_types).
+```
+poetry install
+maturin develop --release -m pypi_types_crate/Cargo.toml
+```
 
 ```shell
 python -m resolve_prototype.resolve [requirement]
-python -m resolve_prototype.compare_with_pip [requirement]
+python -m resolve_prototype.compare.compare_with_pip [requirement]
 ```
 
 Requirements I test with
