@@ -52,7 +52,7 @@ def compare_with_pip(
 
 
 def main():
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.DEBUG)
     root_requirement = pep508_rs.Requirement(sys.argv[1])
     ours_resolution, pip_resolution = compare_with_pip(root_requirement)
 

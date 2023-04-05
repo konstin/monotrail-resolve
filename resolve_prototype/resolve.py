@@ -177,7 +177,7 @@ class State:
             assert entry == normalize(entry), entry
 
     def assert_normalization(self):
-        """ :/ """
+        """:/"""
         self.assert_list_normalization(self.user_constraints.keys())
         self.assert_list_normalization(self.queue)
         self.assert_list_normalization(self.fetch_versions)
@@ -437,6 +437,7 @@ async def update_single_package(
         is_compatible = True
         extras: Set[str] = set()
 
+        print(name, version, state.requirements_per_package[name])
         for requirement, _source in state.requirements_per_package[name]:
             extras.update(set(requirement.extras or []))
             if not requirement.version_or_url:
@@ -581,7 +582,8 @@ async def fetch_versions_and_metadata(
     )
     # noinspection PyTypeChecker
     state.fetch_metadata = dict(sorted(state.fetch_metadata.items()))
-    async with AsyncClient(http2=True, transport=transport) as client:
+    timeout = httpx.Timeout(10.0, connect=10.0)
+    async with AsyncClient(http2=True, transport=transport, timeout=timeout) as client:
         projects_releases = await asyncio.gather(
             *[
                 get_releases(client, name, cache)
@@ -655,7 +657,7 @@ async def resolve(
     while True:
         # We have packages for which we need to recompute the candidate
         while state.queue:
-             # state.assert_normalization()
+            # state.assert_normalization()
             name = state.queue.pop(0)
             await update_single_package(state, name, maximum_versions, python_versions)
 

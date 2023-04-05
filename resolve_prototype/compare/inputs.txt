@@ -1,0 +1,10 @@
+# Nice easy but not trivial case
+black[d,jupyter]
+# A normal django project, some sdist-only
+meine_stadt_transparent
+# A huge ML tree
+transformers[torch,sentencepiece,tokenizers,torch-speech,vision,integrations,timm,torch-vision,codecarbon,accelerate,video]
+# relevant and slow with poetry
+ibis-framework[all]
+# another huge ML tree
+#bio_embeddings[all]

@@ -20,12 +20,22 @@ meine_stadt_transparent
 # A huge ML tree
 transformers[torch,sentencepiece,tokenizers,torch-speech,vision,integrations,timm,torch-vision,codecarbon,accelerate,video]
 # relevant and slow with poetry
-ibis-framework-framework[all]
+ibis-framework[all]
 # another huge ML tree 
 bio_embeddings[all]
 ```
 
-For profiling and benchmarking:
+## Testing
+
+```shell
+pytest
+```
+
+```shell
+python -m resolve_prototype.compare.pip_compare_all
+```
+
+## Profiling and benchmarking
 
 ```shell
 python -m resolve_prototype.resolve_multiple black[d,jupyter] meine_stadt_transparent transformers[torch,sentencepiece,tokenizers,torch-speech,vision,integrations,timm,torch-vision,codecarbon,accelerate,video]
