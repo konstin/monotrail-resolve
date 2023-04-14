@@ -5,6 +5,8 @@ use serde_json::Value;
 
 pub mod core_metadata;
 pub mod helper;
+pub mod marker_intersection;
+pub mod normalized_marker_expression;
 pub mod pypi_metadata;
 pub mod pypi_releases;
 

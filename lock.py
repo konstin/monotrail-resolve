@@ -48,7 +48,7 @@ def format_version_specifier_poetry(requirement: Requirement) -> str:
     # Easier to replace the whitespace than custom star formatting rules here
     poetry_specifiers = []
     for specifier in specifiers:
-        poetry_specifier = str(specifier).replace(" ", "").replace(".dev", "dev")
+        poetry_specifier = str(specifier).replace(".dev", "dev")
         if poetry_specifier.endswith("dev0"):
             poetry_specifier = poetry_specifier.replace("dev0", "dev")
         poetry_specifiers.append(poetry_specifier)
@@ -117,7 +117,7 @@ for (name, version), package_data in sorted(resolution.package_data.items()):
             )
 
     print(name, package_data.metadata.summary)
-    python_version = str(package_data.metadata.requires_python or "*").replace(" ", "")
+    python_version = str(package_data.metadata.requires_python or "*")
     data = {
         "name": name,
         "version": str(version),

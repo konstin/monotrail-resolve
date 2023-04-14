@@ -1,4 +1,3 @@
-use crate::pypi_releases;
 use once_cell::sync::Lazy;
 use pep440_rs::Version;
 use pep508_rs::{MarkerOperator, MarkerTree, MarkerValue, Requirement};
@@ -12,6 +11,8 @@ use std::io::BufReader;
 use std::path::PathBuf;
 use std::str::FromStr;
 use tracing::warn;
+
+use crate::pypi_releases;
 
 /// Adopted from the grammar at <https://peps.python.org/pep-0508/#extras>
 static NORMALIZER: Lazy<Regex> = Lazy::new(|| Regex::new(r"[-_.]+").unwrap());
