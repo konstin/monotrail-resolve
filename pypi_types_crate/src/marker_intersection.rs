@@ -4,7 +4,7 @@ use crate::normalized_marker_expression::{
     normalize_marker_expression, NormalizedExtraEqualityOperator, NormalizedMarkerEqualityOperator,
     NormalizedMarkerExpression,
 };
-use pep440_rs::{Version, VersionSpecifier, VersionSpecifiers};
+use crate::version_intersection::is_disjoint_version_specifiers;
 use pep508_rs::{MarkerExpression, MarkerTree, MarkerWarningKind};
 use std::ops::Deref;
 
@@ -200,176 +200,6 @@ pub fn is_disjoint_marker_tree(
     marker_dnf_as_vec(MarkerTree::And(vec![left.clone(), right.clone()]), reporter).is_empty()
 }
 
-/// Intermediary that we translate a [VersionSpecifier] to
-#[derive(Debug, Eq, PartialEq)]
-struct VersionRange {
-    /// None is -inf
-    min: Option<Version>,
-    min_inclusive: bool,
-    /// None is inf
-    max: Option<Version>,
-    max_inclusive: bool,
-}
-
-impl VersionRange {
-    fn is_disjoint(&self, other: &VersionRange) -> bool {
-        // .min            .max
-        // |+++left++++++++|
-        //             |+++other+++++|
-        //             .min          .max
-        let overlapping1 = self
-            .max
-            .as_ref()
-            .zip(other.min.as_ref())
-            .map_or(true, |(left_max, right_min)| left_max > right_min)
-            || (self.max == other.min && self.max_inclusive && other.min_inclusive);
-        //             .min            .max
-        //             |+++self++++++++|
-        // |+++other+++++|
-        // .min          .max
-        let overlapping2 = other
-            .max
-            .as_ref()
-            .zip(self.min.as_ref())
-            .map_or(true, |(right_max, left_min)| right_max > left_min)
-            || (self.min == other.max && self.min_inclusive && other.max_inclusive);
-        // We determined if the intervals are overlapping, so now invert
-        !(overlapping1 && overlapping2)
-    }
-}
-
-fn version_specifier_to_bounds(specifier: &VersionSpecifier) -> Vec<VersionRange> {
-    match specifier.operator() {
-        pep440_rs::Operator::Equal => vec![VersionRange {
-            min: Some(specifier.version().clone()),
-            min_inclusive: true,
-            max: Some(specifier.version().clone()),
-            max_inclusive: true,
-        }],
-        pep440_rs::Operator::EqualStar => {
-            // VersionSpecifier guarantees that at least one number in release exists
-            let mut max = specifier.version().clone();
-            *max.release.last_mut().unwrap() += 1;
-
-            vec![VersionRange {
-                min: Some(specifier.version().clone()),
-                min_inclusive: true,
-                max: Some(max),
-                max_inclusive: false,
-            }]
-        }
-        pep440_rs::Operator::ExactEqual => {
-            vec![VersionRange {
-                min: Some(specifier.version().clone()),
-                min_inclusive: true,
-                max: Some(specifier.version().clone()),
-                max_inclusive: true,
-            }]
-        }
-        pep440_rs::Operator::NotEqual => vec![
-            VersionRange {
-                min: None,
-                min_inclusive: true,
-                max: Some(specifier.version().clone()),
-                max_inclusive: false,
-            },
-            VersionRange {
-                min: Some(specifier.version().clone()),
-                min_inclusive: false,
-                max: None,
-                max_inclusive: true,
-            },
-        ],
-        pep440_rs::Operator::NotEqualStar => {
-            let mut larger = specifier.version().clone();
-            *larger.release.last_mut().unwrap() += 1;
-
-            vec![
-                VersionRange {
-                    min: None,
-                    min_inclusive: true,
-                    max: Some(specifier.version().clone()),
-                    max_inclusive: false,
-                },
-                VersionRange {
-                    min: Some(larger),
-                    min_inclusive: true,
-                    max: None,
-                    max_inclusive: true,
-                },
-            ]
-        }
-        pep440_rs::Operator::TildeEqual => {
-            // VersionSpecifier guarantees that version has a least two release numbers.
-            // Transform e.g. `1.2.3.8` to `1.2.4`, which gives us the exclusive upper bound of ~=
-            let mut max = specifier.version().clone();
-            max.release.pop();
-            *max.release
-                .last_mut()
-                .expect("Invalid VersionSpecifier that must not exist") += 1;
-
-            vec![VersionRange {
-                min: Some(specifier.version().clone()),
-                min_inclusive: true,
-                max: Some(max),
-                max_inclusive: false,
-            }]
-        }
-        pep440_rs::Operator::LessThan => vec![VersionRange {
-            min: None,
-            min_inclusive: true,
-            max: Some(specifier.version().clone()),
-            max_inclusive: false,
-        }],
-        pep440_rs::Operator::LessThanEqual => vec![VersionRange {
-            min: None,
-            min_inclusive: true,
-            max: Some(specifier.version().clone()),
-            max_inclusive: true,
-        }],
-        pep440_rs::Operator::GreaterThan => vec![VersionRange {
-            min: Some(specifier.version().clone()),
-            min_inclusive: false,
-            max: None,
-            max_inclusive: true,
-        }],
-        pep440_rs::Operator::GreaterThanEqual => vec![VersionRange {
-            min: Some(specifier.version().clone()),
-            min_inclusive: true,
-            max: None,
-            max_inclusive: true,
-        }],
-    }
-}
-
-pub fn is_disjoint_version_specifier(left: &VersionSpecifier, right: &VersionSpecifier) -> bool {
-    let left_all = version_specifier_to_bounds(left);
-    let right_all = version_specifier_to_bounds(right);
-    // this will always only contain 1 or 2 versions anyway
-    for left_range in &left_all {
-        for right_range in &right_all {
-            if !left_range.is_disjoint(right_range) {
-                return false;
-            }
-        }
-    }
-    true
-}
-
-/// True if any of the specifiers in the set is mutually exclusive
-pub fn is_disjoint_version_specifiers(left: &VersionSpecifiers, right: &VersionSpecifiers) -> bool {
-    let left_all: Vec<_> = left.iter().flat_map(version_specifier_to_bounds).collect();
-    let right_all: Vec<_> = right.iter().flat_map(version_specifier_to_bounds).collect();
-    for left_range in &left_all {
-        for right_range in &right_all {
-            if !left_range.is_disjoint(right_range) {
-                return false;
-            }
-        }
-    }
-    true
-}
-
 pub fn is_disjoint_marker_expression(
     left: &MarkerExpression,
     right: &MarkerExpression,
@@ -467,7 +297,8 @@ pub fn is_disjoint_marker_expression(
 #[cfg(test)]
 mod test {
     use super::marker_dnf_as_vec;
-    use pep508_rs::{MarkerExpression, MarkerOperator, MarkerTree, MarkerValue, MarkerWarningKind};
+    use crate::marker_intersection::is_disjoint_marker_tree;
+    use pep508_rs::{MarkerExpression, MarkerTree, MarkerWarningKind};
     use std::collections::HashSet;
     use std::str::FromStr;
 
@@ -508,6 +339,27 @@ mod test {
     }
 
     #[test]
+    fn test_grpcio() {
+        let markers = [
+            r#"python_version < "3.10" and sys_platform != "darwin""#,
+            r#"python_version < "3.10" and sys_platform == "darwin""#,
+            r#"python_version >= "3.10" and sys_platform != "darwin""#,
+            r#"python_version >= "3.10" and sys_platform == "darwin""#,
+        ];
+        for left in markers {
+            for right in markers {
+                if left == right {
+                    continue;
+                }
+
+                let left = MarkerTree::from_str(left).unwrap();
+                let right = MarkerTree::from_str(right).unwrap();
+                assert!(is_disjoint_marker_tree(&left, &right, &mut no_reports));
+            }
+        }
+    }
+
+    #[test]
     fn test_dnf_synthetic() {
         let marker = r#"(os_name == "A" or platform_machine == "B" or platform_version == "C") and
             (os_name == "A" or sys_platform == "E" or platform_machine == "F") and 
@@ -539,34 +391,6 @@ mod test {
         }
     }
 
-    #[test]
-    fn test_disjoint_python_stable() {
-        let disjoint = vec![
-            r#"python_version >= "3.8" and python_version < "3.8""#,
-            r#"python_version >= "3.8" and python_version < "3.7""#,
-            r#"python_version > "3.8" and python_version <= "3.8""#,
-            r#"python_version > "3.8" and python_version <= "3.7""#,
-            r#"python_version == "3.8" and python_version != "3.8""#,
-            r#"python_version == "3.8.*" and python_version >= "3.9""#,
-            r#"python_version == "3.8.*" and python_version < "3.8""#,
-        ];
-        for marker in disjoint {
-            assert_dnf_equal(marker, "");
-        }
-    }
-
-    #[test]
-    fn test_disjoint_python_postfix() {
-        let disjoint = vec![
-            r#"python_version >= "3.8b1" and python_version < "3.8b1""#,
-            r#"python_version >= "3.8b1.post1" and python_version < "3.8b1.post1""#,
-            r#"python_version >= "3.8.post1" and python_version < "3.8.post1""#,
-        ];
-        for marker in disjoint {
-            assert_dnf_equal(marker, "");
-        }
-    }
-
     /// This case is special because we want to actually change the marker
     #[test]
     fn test_intersecting_identical_python_stable() {
@@ -576,32 +400,9 @@ mod test {
     }
 
     #[test]
-    fn test_intersecting_python_stable() {
-        let intersecting = vec![
-            r#"python_version == '3.8' and python_version == '3.8.*'"#,
-            r#"python_version <= '3.9' and python_version > '3.8'"#,
-            r#"python_version < '3.9' and python_version >= '3.8'"#,
-            r#"python_version <= '3.9' and python_version >= '3.8'"#,
-            r#"python_version <= '3.8' and python_version >= '3.8'"#,
-            r#"python_version == '3.8.*' and python_version > '3.8'"#,
-            r#"python_version == '3.8.*' and python_version >= '3.8'"#,
-        ];
-        for marker in intersecting {
-            assert_dnf_equal(marker, marker);
-        }
-    }
-
-    #[test]
-    fn test_intersecting_python_postfix() {
-        let intersecting = vec![
-            r#"python_version == '3.8.*' and python_version > '3.8b1'"#,
-            r#"python_version == '3.8.*' and python_version > '3.8.post1'"#,
-            r#"python_version < '3.8.1b1' and python_version == '3.8.*'"#,
-            r#"python_version < '3.8.post1' and python_version == '3.8.*'"#,
-        ];
-        for marker in intersecting {
-            assert_dnf_equal(marker, marker);
-        }
+    fn test_disjoint_python_stable() {
+        let marker = r#"python_version == "3.8" and python_version != "3.8""#;
+        assert_dnf_equal(marker, "");
     }
 
     /// TODO(konstin): emit every warning only once
@@ -618,7 +419,7 @@ mod test {
             warnings.insert((kind, message, expression.clone()));
         });
         let warning = (MarkerWarningKind::Pep440Error,
-                 "Expected PEP 440 version operator to compare '3.7' with python_full_version, found 'in'",
+                 "Expected PEP 440 version operator to compare '3.7' with python_full_version, found 'in'".to_string(),
                  MarkerExpression::from_str(r#""3.7" in python_full_version"#).unwrap());
         assert_eq!(warnings.into_iter().collect::<Vec<_>>(), [warning]);
     }

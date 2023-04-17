@@ -12,3 +12,4 @@ resolutions_poetry
 sdist_check
 sethmlarson_pypi_data
 target
+venvs

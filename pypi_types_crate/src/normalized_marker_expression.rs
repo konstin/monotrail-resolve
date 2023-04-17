@@ -15,6 +15,7 @@ pub enum NormalizedExtraEqualityOperator {
 }
 
 impl NormalizedExtraEqualityOperator {
+    /// `!=`, `==` or None
     fn from_marker(
         marker: &MarkerExpression,
         reporter: &mut impl FnMut(MarkerWarningKind, String, &MarkerExpression),
@@ -36,6 +37,7 @@ impl NormalizedExtraEqualityOperator {
     }
 }
 
+/// Equal/not equal, in/no it as well as lexicographic comparison
 #[derive(Eq, PartialEq)]
 pub enum NormalizedMarkerEqualityOperator {
     Equal,
@@ -53,6 +55,7 @@ pub enum NormalizedMarkerEqualityOperator {
 }
 
 impl NormalizedMarkerEqualityOperator {
+    /// Equal/not equal, in/no it as well as lexicographic comparison or None
     fn from_marker(
         marker: &MarkerExpression,
         l_string: &MarkerValueString,
@@ -108,7 +111,7 @@ impl NormalizedMarkerEqualityOperator {
     }
 }
 
-/// We can have both the marker left and the value right as well as the value left and the marker
+/// We can have either the marker left and the value right or the value left and the marker
 /// right, e.g. `"Ubuntu" in platform_version` and `sys_platform in "linux"`
 pub enum NormalizedMarkerFieldValue {
     /// e.g. `sys_platform in "linux"`
@@ -140,6 +143,8 @@ impl NormalizedMarkerFieldValue {
 }
 
 /// Like [MarkerExpression], but only valid marker/op/value combinations are possible
+///
+/// Not that this conversion is lossy and there is no direct way to go back to the string
 pub enum NormalizedMarkerExpression {
     /// We want to store both `python_version ~= 3.8.0` and `3.8 ~= python_version` as a specifier.
     /// This is hard because there no operator so that we can write `3.8 ~= python_version` as
@@ -165,6 +170,10 @@ pub enum NormalizedMarkerExpression {
     },
 }
 
+/// We can have a marker like `3.7 > python_version` where the known version is on the left hand
+/// side. To create a version specifier we need to invert the operator so that it becomes the left
+/// hand side, i.e. `python_version < 3.7`. `~=` lacks a direct inverse so we replace it with two
+/// version specifiers.  
 pub fn invert_and_normalize_version_operator(
     operator: &MarkerOperator,
     l_version: &Version,
@@ -197,15 +206,15 @@ pub fn invert_and_normalize_version_operator(
             // `python_full_version <= 2.3.4` and `python_full_version > 2`
             // so the specifiers are:
             // `<= 2.3.4, > 2`
+            // Unwrap is safe here because the caller ensured no local version and there is no star
             let lower_bound =
                 VersionSpecifier::new(pep440_rs::Operator::LessThanEqual, l_version.clone(), false)
-                    .expect("TODO");
-            // indexing is safe here because the release must always have at least
-            // a major version
+                    .unwrap();
+            // indexing is safe here because the release must always have at least a major version
             let major_version = Version::from_release(vec![l_version.release[0]]);
+            // Unwrap is safe here because the caller ensured no local version and there is no star
             let upper_bound =
                 VersionSpecifier::new(pep440_rs::Operator::GreaterThan, major_version, false)
-                    // unwrapping is safe because we know that `> X` is always valid
                     .unwrap();
             VersionSpecifiers::from_iter([lower_bound, upper_bound])
         }
@@ -230,6 +239,8 @@ fn to_pep440_operator(op: &MarkerOperator) -> Option<pep440_rs::Operator> {
     }
 }
 
+/// Converts a [MarkerExpression] into a [NormalizedMarkerExpression] unless there is an error,
+/// emitting diagnostic by the way
 pub fn normalize_marker_expression(
     marker: &MarkerExpression,
     reporter: &mut impl FnMut(MarkerWarningKind, String, &MarkerExpression),

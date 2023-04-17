@@ -9,6 +9,7 @@ pub mod marker_intersection;
 pub mod normalized_marker_expression;
 pub mod pypi_metadata;
 pub mod pypi_releases;
+pub mod version_intersection;
 
 /// Hide something from python
 #[pyclass]
