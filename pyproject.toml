@@ -13,7 +13,7 @@ readme = "Readme.md"
 python = "^3.8"
 aiofiles = "^23.1.0"
 build = { git = "https://github.com/pypa/build", rev = "dd2131654472d4d66028162253fa27d7d1157fc4" }
-httpx = { version = "^0.23.1", extras = ["http2"] }
+httpx = { version = "^0.24.0", extras = ["http2"] }
 importlib-metadata = "^6.0.0"
 orjson = "^3.8.3"
 pydantic = "^1.10.3"
@@ -24,15 +24,15 @@ tomli-w = "^1.0.0"
 [tool.poetry.group.dev.dependencies]
 black = { extras = ["jupyter"], version = "^23.1.0" }
 jupyter = "^1.0.0"
+maturin = "^0.15.1"
+py-spy = "^0.3.14"
 pytest = "^7.2.0"
 pytest-asyncio = "^0.21.0"
-pytest-httpx = "^0.21.2"
+pytest-httpx = "^0.22.0"
 requests = "^2.28.2"
-ruff = "^0.0.261"
+ruff = "^0.0.265"
 tqdm = "^4.65.0"
-zstandard = "^0.20.0"
-maturin = "^0.14.15"
-py-spy = "^0.3.14"
+zstandard = "^0.21.0"
 
 [tool.pytest.ini_options]
 minversion = "7.2.0"

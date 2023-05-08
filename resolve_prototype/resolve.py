@@ -516,15 +516,6 @@ async def update_single_package(
             logger.debug(f"Queuing {normalize(new.name)}")
             state.queue.append(normalize(new.name))
 
-    a = defaultdict(list)
-    for req in state.metadata_requirements[(name, new_version)]:
-        if not req.evaluate_extras_and_python_version(new_extras, python_versions):
-            continue
-        a[normalize(req.name)].append(req)
-    for req_name, reqs in a.items():
-        if len(reqs) > 1 and len(set(tuple(req.version_or_url or []) for req in reqs)) > 1:
-            print(name, new_version, req_name, reqs)
-
 
 async def build_sdists(
     state: State,

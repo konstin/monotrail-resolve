@@ -33,10 +33,7 @@ def compare_with_poetry(
             f"from {poetry_dir(root_requirement)}"
         )
         work_dir = poetry_dir(root_requirement)
-        check_call(
-            ["poetry", "update", "--lock", "-v"],
-            cwd=work_dir,
-        )
+        check_call(["poetry", "update", "--lock", "-v"], cwd=work_dir)
         _poetry_all, poetry_current = poetry_export(root_requirement, work_dir)
     else:
         logger.info(

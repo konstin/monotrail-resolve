@@ -21,7 +21,9 @@ def main():
     results = []
     for requirement in requirements:
         if args.tool == "poetry":
-            ours_resolution, pip_resolution = compare_with_poetry(requirement, refresh=args.refresh)
+            ours_resolution, pip_resolution = compare_with_poetry(
+                requirement, refresh=args.refresh
+            )
         else:
             ours_resolution, pip_resolution = compare_with_pip(requirement)
         if args.tool == "pip":
