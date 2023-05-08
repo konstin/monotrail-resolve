@@ -20,10 +20,8 @@ jobs:
           components: rustfmt
           override: true
       - name: Cache cargo build
-        working-directory: pypi_types_crate
         uses: Swatinem/rust-cache@v2
       - uses: actions-rs/cargo@v1
-        working-directory: pypi_types_crate
         with:
           command: fmt
           args: --all -- --check
@@ -40,7 +38,6 @@ jobs:
           components: clippy
           override: true
       - uses: actions-rs/cargo@v1
-        working-directory: pypi_types_crate
         with:
           command: clippy
           args: --tests --all-features -- -D warnings

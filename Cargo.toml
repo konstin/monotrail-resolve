@@ -1,0 +1,4 @@
+[workspace]
+members = [
+    "pypi_types_crate"
+]
