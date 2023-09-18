@@ -38,7 +38,9 @@ class Metadata:
     def from_name_and_requires_dist(
         name: str, requires_dist: list[str] | None
     ) -> Metadata: ...
+
     def __eq__(self, other) -> Any: ...
+
     def to_json_str(self) -> str: ...
 
 class Downloads:
