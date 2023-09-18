@@ -2,7 +2,7 @@ import os
 from concurrent.futures import Executor
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Dict, Any
+from typing import Any
 from unittest.mock import patch
 
 import httpx
@@ -102,7 +102,7 @@ def httpx_mock_cache_impl(
     data_dir: Path,
     request: httpx.Request,
     name: str,
-    cache: Dict[str, Any],
+    cache: dict[str, Any],
     file_stem: str,
 ) -> httpx.Response:
     path = data_dir.joinpath(file_stem).with_suffix(".json.zst")
@@ -128,8 +128,8 @@ def httpx_mock_cache_impl(
 
 
 class HttpMock:
-    cache_simple: Dict[str, Any]
-    cache_json_metadata: Dict[str, Any]
+    cache_simple: dict[str, Any]
+    cache_json_metadata: dict[str, Any]
     data_dir: Path
 
     def __init__(self, rootpath: Path, test_name: str):
@@ -173,7 +173,7 @@ class HttpMock:
 class SdistMetadataMock:
     rootpath: Path
     test_name: str
-    data: Dict[str, str]
+    data: dict[str, str]
     datafile: Path
 
     def __init__(self, test_name: str, rootpath: Path) -> None:
@@ -223,7 +223,7 @@ def assert_resolution(resolution: Resolution, rootpath: Path, name: str):
     assert frozen == requirements_txt.read_text()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio()
 @respx.mock(assert_all_mocked=assert_all_mocked, assert_all_called=assert_all_called)
 async def test_pandas(respx_mock: MockRouter, pytestconfig: pytest.Config):
     """Simplest case, doesn't use any sdists"""
@@ -240,7 +240,7 @@ async def test_pandas(respx_mock: MockRouter, pytestconfig: pytest.Config):
     assert_resolution(resolution, pytestconfig.rootpath, "pandas")
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio()
 @respx.mock(assert_all_mocked=assert_all_mocked, assert_all_called=assert_all_called)
 async def test_meine_stadt_transparent(
     respx_mock: MockRouter, pytestconfig: pytest.Config
@@ -263,7 +263,7 @@ async def test_meine_stadt_transparent(
     assert_resolution(resolution, pytestconfig.rootpath, "meine_stadt_transparent")
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio()
 @respx.mock(assert_all_mocked=assert_all_mocked, assert_all_called=assert_all_called)
 async def test_matplotlib(respx_mock: MockRouter, pytestconfig: pytest.Config):
     """Test wheel metadata downloading"""

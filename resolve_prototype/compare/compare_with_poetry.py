@@ -2,7 +2,6 @@ import asyncio
 import logging
 import sys
 from subprocess import check_call
-from typing import Dict, Tuple
 
 from pypi_types import pep508_rs
 from pypi_types.pep440_rs import VersionSpecifier
@@ -20,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 def compare_with_poetry(
     root_requirement: pep508_rs.Requirement, refresh: bool = False
-) -> Tuple[Dict[str, str], Dict[str, str]]:
+) -> tuple[dict[str, str], dict[str, str]]:
     # noinspection PyArgumentList
     env = pep508_rs.MarkerEnvironment.current()
 
@@ -57,7 +56,7 @@ def compare_with_poetry(
         name.lower().replace("-", "_").replace(".", "_"): version
         for name, version in poetry_current
     }
-    ours_resolution_env: Dict[str, str] = {
+    ours_resolution_env: dict[str, str] = {
         name.lower().replace("-", "_").replace(".", "_"): str(version)
         for name, version in ours_resolution_env.package_data
     }

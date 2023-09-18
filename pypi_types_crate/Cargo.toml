@@ -18,7 +18,7 @@ pep508_rs = { version = "0.2.1", features = ["pyo3", "serde"] }
 pyo3 = { version = "0.18.3", features = ["extension-module", "abi3-py38", "anyhow"] }
 pyo3-log = "0.8.1"
 regex = "1.8.1"
-rfc2047-decoder = "0.2.2"
+rfc2047-decoder = "1.0.1"
 serde = { version = "1.0.162", features = ["derive"] }
 serde_json = "1.0.96"
 thiserror = "1.0.40"

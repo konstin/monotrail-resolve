@@ -3,7 +3,6 @@ import sys
 import time
 from pathlib import Path
 from subprocess import check_call, check_output
-from typing import Dict
 
 from pypi_types import pep508_rs
 
@@ -14,7 +13,7 @@ def pip_venv_dir(root_requirement: pep508_rs.Requirement) -> Path:
     return resolutions_pip.joinpath(str(root_requirement) + ".venv")
 
 
-def read_pip_report(root_requirement: pep508_rs.Requirement) -> Dict[str, str]:
+def read_pip_report(root_requirement: pep508_rs.Requirement) -> dict[str, str]:
     report_file = resolutions_pip.joinpath(f"{root_requirement}.json")
     report = json.loads(report_file.read_text())
     return {
@@ -22,7 +21,7 @@ def read_pip_report(root_requirement: pep508_rs.Requirement) -> Dict[str, str]:
     }
 
 
-def pip_resolve(root_requirement: pep508_rs.Requirement) -> Dict[str, str]:
+def pip_resolve(root_requirement: pep508_rs.Requirement) -> dict[str, str]:
     assert "/" not in str(root_requirement)
     resolutions_pip.mkdir(exist_ok=True)
     venv_dir = pip_venv_dir(root_requirement)

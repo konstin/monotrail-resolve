@@ -1,7 +1,7 @@
 import logging
 import time
 from collections import defaultdict
-from typing import Optional, List, BinaryIO, Dict, Union
+from typing import BinaryIO
 from zipfile import ZipFile
 
 import httpx
@@ -65,7 +65,7 @@ class RemoteZipFile(BinaryIO):
     def tell(self):
         return self.pos
 
-    def read(self, size: Optional[int] = None):
+    def read(self, size: int | None = None):
         # Here we could also use an end-open range, but we already have the information,
         # so let's keep track locally (which we when in doubt we can trust over the
         # server)
@@ -88,7 +88,7 @@ class RemoteZipFile(BinaryIO):
 
 async def get_releases(
     client: AsyncClient, project: str, cache: Cache, refresh: bool = False
-) -> Dict[pep440_rs.Version, List[pypi_releases.File]]:
+) -> dict[pep440_rs.Version, list[pypi_releases.File]]:
     assert "/" not in normalize(project)
     url = (
         f"https://pypi.org/simple/{normalize(project)}/"
@@ -127,13 +127,13 @@ async def get_releases(
 
 def parse_releases_data(
     project: str, data: str
-) -> Dict[pep440_rs.Version, List[pypi_releases.File]]:
+) -> dict[pep440_rs.Version, list[pypi_releases.File]]:
     data: pypi_releases.PypiReleases = pypi_releases.parse(data)
     assert data.meta.api_version in [
         "1.0",
         "1.1",
     ], f"Unsupported api version {data.meta.api_version}"
-    releases: Dict[pep440_rs.Version, List[pypi_releases.File]] = defaultdict(list)
+    releases: dict[pep440_rs.Version, list[pypi_releases.File]] = defaultdict(list)
     ignored = list()
     invalid_versions = []
     for file in data.files:
@@ -195,7 +195,7 @@ def get_metadata_from_wheel(
     filename: str,
     url: str,
     cache: Cache,
-) -> Union[core_metadata.Metadata21, RuntimeError]:
+) -> core_metadata.Metadata21 | RuntimeError:
     metadata_path = f"{name}-{version}.dist-info/METADATA"
     start = time.time()
     # By PEP 440 version must contain any slashes or other weird characters

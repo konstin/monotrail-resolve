@@ -1,9 +1,8 @@
 import logging
-import os
 import random
 import re
 from pathlib import Path
-from typing import Optional, NewType
+from typing import NewType
 
 MINIMUM_SUPPORTED_PYTHON_MINOR = 7
 
@@ -43,14 +42,14 @@ class Cache:
     def filename(self, bucket: str, name: str) -> Path:
         return self.root_cache_dir.joinpath(bucket).joinpath(name)
 
-    def get_filename(self, bucket: str, name: str) -> Optional[Path]:
+    def get_filename(self, bucket: str, name: str) -> Path | None:
         """Middle abstraction for rust bridging"""
         if not self.read:
             return None
 
         return self.filename(bucket, name)
 
-    def get(self, bucket: str, name: str) -> Optional[str]:
+    def get(self, bucket: str, name: str) -> str | None:
         if not self.read:
             return None
 
@@ -71,4 +70,4 @@ class Cache:
         temp_name = "".join(random.choices(characters, k=8))
         temp_file = filename.parent.joinpath(temp_name)
         temp_file.write_text(content)
-        os.replace(temp_file, filename)
+        temp_file.replace(filename)

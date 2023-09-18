@@ -22,6 +22,9 @@ class ProjectHooksCaptureOutput:
     stdout = ""
     stderr = ""
 
+    def __init__(self):
+        pass
+
     def subprocess_runner(self, cmd, cwd=None, extra_environ=None):
         """Modified from pyproject_hooks.default_subprocess_runner"""
         env = os.environ.copy()

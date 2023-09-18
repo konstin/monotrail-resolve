@@ -1,43 +1,43 @@
-from typing import List, Optional, Any, Union
+from typing import Any
 
 class Welcome:
     info: Metadata
     last_serial: int
-    urls: List[Url]
-    vulnerabilities: List[Vulnerability]
+    urls: list[Url]
+    vulnerabilities: list[Vulnerability]
 
 class Metadata:
-    author: Optional[str]
-    author_email: Optional[str]
-    bugtrack_url: Optional[Any]
-    classifiers: Optional[List[str]]
-    description: Optional[str]
-    description_content_type: Optional[str]
-    docs_url: Optional[Any]
-    download_url: Optional[str]
-    downloads: Optional[Downloads]
-    home_page: Optional[str]
-    keywords: Optional[Union[str, List[str]]]
-    license: Optional[str]
-    maintainer: Optional[str]
-    maintainer_email: Optional[str]
+    author: str | None
+    author_email: str | None
+    bugtrack_url: Any | None
+    classifiers: list[str] | None
+    description: str | None
+    description_content_type: str | None
+    docs_url: Any | None
+    download_url: str | None
+    downloads: Downloads | None
+    home_page: str | None
+    keywords: str | list[str] | None
+    license: str | None
+    maintainer: str | None
+    maintainer_email: str | None
     name: str
-    package_url: Optional[str]
-    platform: Optional[Union[str, List[str]]]
-    project_url: Optional[Union[str, List[str]]]
-    project_urls: Optional[ProjectUrls]
-    release_url: Optional[str]
-    requires_dist: Optional[List[str]]
-    requires_python: Optional[str]
-    summary: Optional[str]
+    package_url: str | None
+    platform: str | list[str] | None
+    project_url: str | list[str] | None
+    project_urls: ProjectUrls | None
+    release_url: str | None
+    requires_dist: list[str] | None
+    requires_python: str | None
+    summary: str | None
     version: str
-    yanked: Optional[bool]
-    yanked_reason: Optional[Any]
+    yanked: bool | None
+    yanked_reason: Any | None
 
     @staticmethod
     def from_name_and_requires_dist(
-        name: str, requires_dist: Optional[List[str]]
-    ) -> "Metadata": ...
+        name: str, requires_dist: list[str] | None
+    ) -> Metadata: ...
     def __eq__(self, other) -> Any: ...
     def to_json_str(self) -> str: ...
 
@@ -47,15 +47,15 @@ class Downloads:
     last_week: int
 
 class ProjectUrls:
-    documentation: Optional[str]
-    funding: Optional[str]
-    homepage: Optional[str]
-    release_notes: Optional[str]
-    source: Optional[str]
-    tracker: Optional[str]
+    documentation: str | None
+    funding: str | None
+    homepage: str | None
+    release_notes: str | None
+    source: str | None
+    tracker: str | None
 
 class Url:
-    comment_text: Optional[str]
+    comment_text: str | None
     digests: Digests
     downloads: int
     filename: str
@@ -63,28 +63,28 @@ class Url:
     md5_digest: str
     packagetype: str
     python_version: str
-    requires_python: Optional[str]
+    requires_python: str | None
     size: int
     upload_time: str
     upload_time_iso_8601: str
     url: str
     yanked: bool
-    yanked_reason: Optional[Any]
+    yanked_reason: Any | None
 
 class Digests:
-    blake2_b_256: Optional[str]
+    blake2_b_256: str | None
     md5: str
     sha256: str
 
 class Vulnerability:
-    aliases: List[str]
+    aliases: list[str]
     details: str
-    fixed_in: List[str]
+    fixed_in: list[str]
     id: str
     link: str
     source: str
-    summary: Optional[Any]
-    withdrawn: Optional[Any]
+    summary: Any | None
+    withdrawn: Any | None
 
 def parse(text: str) -> Welcome: ...
 def parse_metadata(text: str) -> Metadata: ...

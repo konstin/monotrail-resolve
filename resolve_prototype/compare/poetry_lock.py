@@ -3,7 +3,6 @@ import sys
 import time
 from pathlib import Path
 from subprocess import check_call
-from typing import List, Tuple
 
 import packaging.requirements
 
@@ -17,7 +16,7 @@ def poetry_dir(root_requirement: Requirement) -> Path:
 
 def read_poetry_requirements_current(
     root_requirement: Requirement,
-) -> List[Tuple[str, str]]:
+) -> list[tuple[str, str]]:
     """Reads the exported poetry requirements filtered down to the current
     environment"""
     lines = (
@@ -34,7 +33,7 @@ def read_poetry_requirements_current(
 
 def poetry_resolve(
     root_requirement: Requirement,
-) -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]]]:
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
     """Creates the whole thing anew each time"""
     assert "/" not in str(root_requirement)
     work_dir = poetry_dir(root_requirement)
@@ -69,7 +68,7 @@ def poetry_resolve(
 
 def poetry_export(
     root_requirement: Requirement, work_dir: Path
-) -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]]]:
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
     check_call(
         [
             "poetry",

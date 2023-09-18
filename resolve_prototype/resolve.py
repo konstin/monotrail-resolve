@@ -47,8 +47,7 @@ from argparse import ArgumentParser
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, Executor
 from dataclasses import dataclass
-from typing import List, Dict, Tuple, Set, Type, Iterable, Union
-from typing import Optional
+from collections.abc import Iterable
 
 import httpx
 import tomli_w
@@ -75,9 +74,7 @@ from resolve_prototype.sdist import build_sdist
 logger = logging.getLogger(__name__)
 
 
-def parse_requirement_fixup(
-    requirement: str, debug_source: Optional[str]
-) -> Requirement:
+def parse_requirement_fixup(requirement: str, debug_source: str | None) -> Requirement:
     """Fix unfortunately popular errors such as `elasticsearch-dsl (>=7.2.0<8.0.0)` in
     django-elasticsearch-dsl 7.2.2 with a regex heuristic
 
@@ -92,62 +89,64 @@ def parse_requirement_fixup(
             requirement_parsed = Requirement(
                 re.sub(r"(\d)([<>=~^!])", r"\1,\2", requirement)
             )
+
+        except Pep508Error:
+            pass
+        else:
             if debug_source:
                 logger.warning(
                     f"Requirement `{requirement}` for {debug_source} is invalid"
                     " (missing comma)"
                 )
             return requirement_parsed
-        except Pep508Error:
-            pass
         # Didn't work with the fixup either? raise the error with the original string
         raise
 
 
 class State:
     root_requirement: Requirement
-    user_constraints: Dict[NormalizedName, List[Requirement]]
+    user_constraints: dict[NormalizedName, list[Requirement]]
 
     # The list of packages which we need to reevaluate
-    queue: List[NormalizedName]
+    queue: list[NormalizedName]
     # Process after fetching additional information
-    fetch_versions: Set[NormalizedName]
+    fetch_versions: set[NormalizedName]
     # The idea of a dict is that we can query a version to fetch, but if something
     # further back in the queue requires a different version constraint it gets updated
     # before fetching the now useless version
-    fetch_metadata: Dict[NormalizedName, Version]
+    fetch_metadata: dict[NormalizedName, Version]
     # remember which sdist we did already process
-    resolved_sdists: Set[Tuple[NormalizedName, Version]]
+    resolved_sdists: set[tuple[NormalizedName, Version]]
 
     # package name -> list of versions and the files (sdist and wheel only) from pypi
-    versions_cache: Dict[NormalizedName, Dict[Version, List[pypi_releases.File]]]
+    versions_cache: dict[NormalizedName, dict[Version, list[pypi_releases.File]]]
     # The requirements for specific package version, either from wheel_metadata, or if
     # that isn't available (yet),from pypi_metadata. Extra fields because there can be
     # parsing errors with the pypi metadata
-    metadata_requirements: Dict[Tuple[NormalizedName, Version], List[Requirement]]
+    metadata_requirements: dict[tuple[NormalizedName, Version], list[Requirement]]
     # (package name, package version) -> pypi metadata, possibly wrong given
     # wheel_metadata
-    pypi_metadata: Dict[Tuple[NormalizedName, Version], pypi_metadata.Metadata]
+    pypi_metadata: dict[tuple[NormalizedName, Version], pypi_metadata.Metadata]
     # (package name, package version) -> metadata from a while from pypi
-    wheel_metadata: Dict[Tuple[NormalizedName, Version], core_metadata.Metadata21]
+    wheel_metadata: dict[tuple[NormalizedName, Version], core_metadata.Metadata21]
     # (wheel filename) -> METADATA contents
-    wheel_file_metadata: Dict[str, core_metadata.Metadata21]
+    wheel_file_metadata: dict[str, core_metadata.Metadata21]
     # Reprocess this even if the version stayed the same
     # Stores a list of the old requirements so we can remove them
-    changed_metadata: Dict[Tuple[NormalizedName, Version], List[Requirement]]
+    changed_metadata: dict[tuple[NormalizedName, Version], list[Requirement]]
     # Reverse mapping: package name -> requirements. Without version since those are
     # the ones we determine the version from
-    requirements_per_package: Dict[
-        NormalizedName, Set[Tuple[Requirement, Tuple[NormalizedName, Version]]]
+    requirements_per_package: dict[
+        NormalizedName, set[tuple[Requirement, tuple[NormalizedName, Version]]]
     ]
     # name -> (version, extras)
-    candidates: Dict[NormalizedName, Tuple[Version, Set[str]]]
+    candidates: dict[NormalizedName, tuple[Version, set[str]]]
 
     # Currently used to switch out the ThreadPoolExecutor we normally use with the lazy
     # zip for a DummyExecutor
-    executor: Type[Executor]
+    executor: type[Executor]
 
-    def __init__(self, root_requirement: Requirement, executor: Type[Executor]):
+    def __init__(self, root_requirement: Requirement, executor: type[Executor]):
         self.root_requirement = root_requirement
         self.user_constraints = {normalize(root_requirement.name): [root_requirement]}
         self.queue = [normalize(root_requirement.name)]
@@ -172,7 +171,7 @@ class State:
             }
 
     @staticmethod
-    def assert_list_normalization(data: Iterable[Union[str, NormalizedName]]):
+    def assert_list_normalization(data: Iterable[str | NormalizedName]):
         for entry in data:
             assert entry == normalize(entry), entry
 
@@ -202,24 +201,24 @@ class ReleaseData:
     # E.g. "Django" vs. "django
     unnormalized_name: str
     # The requirements read from the wheel or the PEP 517 api with fixups
-    requirements: List[Requirement]
+    requirements: list[Requirement]
     # Metadata read from the wheel
     metadata: core_metadata.Metadata21
     # The list of files for this release
-    files: List[pypi_releases.File]
+    files: list[pypi_releases.File]
     # The list of all extras in our resolution, which is a non-strict subset of all
     # extras of this package
-    extras: Set[str]
+    extras: set[str]
 
 
 @dataclass
 class Resolution:
     # The requirements given by the user
-    root: List[Requirement]
-    package_data: Dict[Tuple[NormalizedName, Version], ReleaseData]
+    root: list[Requirement]
+    package_data: dict[tuple[NormalizedName, Version], ReleaseData]
 
     def for_environment(
-        self, env: MarkerEnvironment, root_extras: List[str]
+        self, env: MarkerEnvironment, root_extras: list[str]
     ) -> "Resolution":
         """Filters down the resolution to the list of packages that need to be installed
         for the given environment.
@@ -235,10 +234,10 @@ class Resolution:
         env_root = list(
             filter(lambda req: req.evaluate_markers(env, root_extras), self.root)
         )
-        selected: Set[NormalizedName] = {normalize(req.name) for req in env_root}
+        selected: set[NormalizedName] = {normalize(req.name) for req in env_root}
         # name -> extras
         # selected_extras contains only normalized keys
-        selected_extras: Dict[NormalizedName, Set[str]] = defaultdict(set)
+        selected_extras: dict[NormalizedName, set[str]] = defaultdict(set)
         for req in self.root:
             selected_extras[normalize(req.name)].update(req.extras or [])
 
@@ -309,7 +308,7 @@ def query_wheel_metadata(state: State, cache: Cache):
     """
     # Check the packages with wheels with empty requires_dist, they might not be so
     # empty after all (name, version, filename, url, cache)
-    query_wheels: List[Tuple[str, Version, str, str, Cache]] = []
+    query_wheels: list[tuple[str, Version, str, str, Cache]] = []
     for name, (version, _extras) in state.candidates.items():
         # See doc comment
         if state.pypi_metadata[(name, version)].requires_dist:
@@ -341,13 +340,15 @@ def query_wheel_metadata(state: State, cache: Cache):
         logger.debug("get_metadata_from_wheel with ThreadPoolExecutor (not all cached)")
         # ZipFile doesn't support async :/
         with ThreadPoolExecutor() as executor:
-            metadatas = executor.map(get_metadata_from_wheel, *zip(*query_wheels))
+            metadatas = executor.map(
+                get_metadata_from_wheel, *zip(*query_wheels, strict=True)
+            )
     # (name, version) -> list[(url, metadata)]
-    by_candidate: Dict[
-        Tuple[NormalizedName, Version], List[Tuple[str, core_metadata.Metadata21]]
+    by_candidate: dict[
+        tuple[NormalizedName, Version], list[tuple[str, core_metadata.Metadata21]]
     ] = defaultdict(list)
     for metadata, (name, version, _filename, url, _cache) in zip(
-        metadatas, query_wheels
+        metadatas, query_wheels, strict=True
     ):
         if isinstance(metadata, Exception):
             logger.warning(
@@ -406,7 +407,7 @@ async def update_single_package(
     state: State,
     name: NormalizedName,
     maximum_versions: bool,
-    python_versions: List[Version],
+    python_versions: list[Version],
 ):
     """Processes a single package, normally resolving it into a version
     Steps:
@@ -428,14 +429,14 @@ async def update_single_package(
     # Apply all requirements and find the highest (given `maximum_versions`)
     # possible version
     new_version = None
-    new_extras: Set[str] = set()
+    new_extras: set[str] = set()
     for version in sorted(state.versions_cache[name].keys(), reverse=maximum_versions):
         # TODO: proper prerelease handling (i.e. check the specifiers if they
         #  have consensus over pulling specific prerelease ranges in)
         if version.any_prerelease():
             continue
         is_compatible = True
-        extras: Set[str] = set()
+        extras: set[str] = set()
 
         logger.debug(name, version, state.requirements_per_package[name])
         for requirement, _source in state.requirements_per_package[name]:
@@ -520,7 +521,7 @@ async def update_single_package(
 async def build_sdists(
     state: State,
     cache: Cache,
-    sdists: List[Tuple[NormalizedName, Version, pypi_releases.File]],
+    sdists: list[tuple[NormalizedName, Version, pypi_releases.File]],
     transport: AsyncBaseTransport,
 ):
     # Download and PEP 517 query sdists for metadata
@@ -531,7 +532,9 @@ async def build_sdists(
         metadatas = await asyncio.gather(
             *[build_sdist(client, sdist[2], cache) for sdist in sdists]
         )
-    for (name, version, _filename), metadata in sorted(zip(sdists, metadatas)):
+    for (name, version, _filename), metadata in sorted(
+        zip(sdists, metadatas, strict=True)
+    ):
         state.wheel_metadata[(name, version)] = metadata
         state.metadata_requirements[(name, version)] = metadata.requires_dist
         state.changed_metadata[(name, version)] = state.metadata_requirements[
@@ -551,7 +554,7 @@ async def build_sdists(
 
 async def find_sdists_for_build(
     state: State,
-) -> List[Tuple[NormalizedName, Version, pypi_releases.File]]:
+) -> list[tuple[NormalizedName, Version, pypi_releases.File]]:
     sdists = []
     for name, (version, _extras) in state.candidates.items():
         if (name, version) in state.resolved_sdists:
@@ -597,7 +600,7 @@ async def fetch_versions_and_metadata(
             ]
         )
     state.versions_cache.update(
-        dict(zip(sorted(state.fetch_versions), projects_releases))
+        dict(zip(sorted(state.fetch_versions), projects_releases, strict=True))
     )
     # we got the info where we delayed previously, now actually compute a candidate
     # version
@@ -605,7 +608,7 @@ async def fetch_versions_and_metadata(
     state.fetch_versions.clear()
 
     for (name, version), metadata in zip(
-        state.fetch_metadata.items(), projects_metadata
+        state.fetch_metadata.items(), projects_metadata, strict=True
     ):
         try:
             state.metadata_requirements[(name, version)] = [
@@ -634,7 +637,7 @@ async def resolve(
     cache: Cache,
     download_wheels: bool = True,
     maximum_versions: bool = True,
-    executor: Type[Executor] = ThreadPoolExecutor,
+    executor: type[Executor] = ThreadPoolExecutor,
 ) -> Resolution:
     transport = httpx.AsyncHTTPTransport(retries=3)
 
@@ -688,7 +691,7 @@ async def resolve(
         if download_wheels:
             query_wheel_metadata(state, cache)
 
-        # We found some METADSTA for missing requires_dist, we can resolve further
+        # We found some METADATA for missing requires_dist, we can resolve further
         # before building sdists
         if state.queue:
             state.queue.sort()

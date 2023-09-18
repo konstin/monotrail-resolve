@@ -1,7 +1,6 @@
 import sys
 import time
 from collections import defaultdict
-from typing import Dict, List
 
 import orjson
 import pypi_types
@@ -16,7 +15,7 @@ def main():
     for file in default_cache_dir.joinpath("pypi_simple_releases").iterdir():
         invalid_versions = []
         invalid_filenames = []
-        releases: Dict[Version, List[str]] = defaultdict(list)
+        releases: dict[Version, list[str]] = defaultdict(list)
         data = orjson.loads(file.read_bytes())
         for pypi_file in data["files"]:
             if version_str := filename_to_version(file.stem, pypi_file["filename"]):
