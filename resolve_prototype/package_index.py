@@ -13,6 +13,8 @@ from pypi_types import (
     pep440_rs,
     filename_to_version,
     core_metadata,
+    read_parsed_release_data,
+    write_parsed_release_data,
 )
 from resolve_prototype.common import user_agent, normalize, Cache, NormalizedName
 
@@ -43,7 +45,7 @@ class RemoteZipFile(BinaryIO):
         response.raise_for_status()
         accept_ranges = response.headers.get("accept-ranges")
         assert accept_ranges == "bytes", (
-            f"The server needs to `accept-ranges: bytes`, "
+            "The server needs to `accept-ranges: bytes`, "
             f"but it says {accept_ranges} for {url}"
         )
         self.len = int(response.headers["content-length"])
@@ -98,8 +100,8 @@ async def get_releases(
     # normalize removes all dots in the name
     cached = cache.get("pypi_simple_releases", normalize(project) + ".json")
     if cached and not refresh and not cache.refresh_versions:
-        logger.debug(f"Using cached releases for {url}")
-        return parse_releases_data(project, cached)
+        logger.info(f"Using cached parsed releases for {url}")
+        return read_parsed_release_data(cached)
 
     etag = cache.get("pypi_simple_releases", normalize(project) + ".etag")
     logger.debug(f"Querying releases from {url}")
@@ -112,10 +114,15 @@ async def get_releases(
     if response.status_code == 200:
         logger.debug(f"New response for {url}")
         data = response.text
-        cache.set("pypi_simple_releases", normalize(project) + ".json", data)
         if etag := response.headers.get("etag"):
             cache.set("pypi_simple_releases", normalize(project) + ".etag", etag)
-        return parse_releases_data(project, data)
+        parsed_data = parse_releases_data(project, data)
+        cache.set(
+            "pypi_simple_releases",
+            normalize(project) + ".json",
+            write_parsed_release_data(parsed_data),
+        )
+        return parsed_data
     elif response.status_code == 304:
         assert cached
         logger.debug(f"Not modified, using cached for {url}")
@@ -185,7 +192,7 @@ async def get_metadata(
     except Exception as err:
         raise RuntimeError(
             f"Failed to parse metadata for {project} {version}, "
-            f"this is most likely a bug"
+            "this is most likely a bug"
         ) from err
 
 
@@ -201,7 +208,7 @@ def get_metadata_from_wheel(
     # By PEP 440 version must contain any slashes or other weird characters
     # TODO: check if there are any windows-unfriendly characters
     # TODO: Better cache tag
-    metadata_filename = cache.get_filename(
+    metadata_filename = cache.get_path(
         "wheel_metadata", f"{filename.split('/')[0]}.metadata"
     )
     if metadata_filename.is_file():

@@ -326,7 +326,7 @@ def query_wheel_metadata(state: State, cache: Cache):
     # Spawning a thread pool is expensive, only do it if we need it
     all_cached = True
     for _name, _version, filename, _url, cache in query_wheels:
-        metadata_filename = cache.get_filename(
+        metadata_filename = cache.get_path(
             "wheel_metadata", f"{filename.split('/')[0]}.metadata"
         )
         if not metadata_filename.is_file():
@@ -433,7 +433,7 @@ async def update_single_package(
     for version in sorted(state.versions_cache[name].keys(), reverse=maximum_versions):
         # TODO: proper prerelease handling (i.e. check the specifiers if they
         #  have consensus over pulling specific prerelease ranges in)
-        if version.any_prerelease():
+        if version.any_prerelease() and name != "greenlet":
             continue
         is_compatible = True
         extras: set[str] = set()

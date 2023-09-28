@@ -3,3 +3,7 @@ resolver = "2"
 members = [
     "pypi_types_crate"
 ]
+
+[profile.profiling]
+inherits = "release"
+debug = true

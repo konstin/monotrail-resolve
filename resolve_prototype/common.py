@@ -39,21 +39,21 @@ class Cache:
         self.write = write
         self.refresh_versions = refresh_versions
 
-    def filename(self, bucket: str, name: str) -> Path:
+    def path(self, bucket: str, name: str) -> Path:
         return self.root_cache_dir.joinpath(bucket).joinpath(name)
 
-    def get_filename(self, bucket: str, name: str) -> Path | None:
+    def get_path(self, bucket: str, name: str) -> Path | None:
         """Middle abstraction for rust bridging"""
         if not self.read:
             return None
 
-        return self.filename(bucket, name)
+        return self.path(bucket, name)
 
     def get(self, bucket: str, name: str) -> str | None:
         if not self.read:
             return None
 
-        filename = self.filename(bucket, name)
+        filename = self.path(bucket, name)
         # Avoid an expensive is_file call
         try:
             return filename.read_text()
@@ -63,7 +63,7 @@ class Cache:
     def set(self, bucket: str, name: str, content: str):
         if not self.write:
             return False
-        filename = self.filename(bucket, name)
+        filename = self.path(bucket, name)
         filename.parent.mkdir(exist_ok=True, parents=True)
         # tempfile to avoid broken cache entry
         characters = "abcdefghijklmnopqrstuvwxyz0123456789_"

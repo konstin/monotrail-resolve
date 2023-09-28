@@ -34,6 +34,5 @@ class Metadata21:
 
     @staticmethod
     def read(path: str, debug_src: str | None = None) -> Metadata21: ...
-
     @staticmethod
     def from_bytes(data: bytes, debug_src: str | None = None) -> Metadata21: ...

@@ -17,6 +17,7 @@ struct MarkerTreeDnf(Vec<Vec<MarkerExpression>>);
 
 impl MarkerTreeDnf {
     /// Build an `And(vec![Or(), Or(), ...])` tree
+    #[allow(unused)]
     fn into_marker_tree(self) -> MarkerTree {
         if self.0.len() == 1 {
             if self.0[0].len() == 1 {

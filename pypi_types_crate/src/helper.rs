@@ -72,14 +72,33 @@ pub fn filename_to_version(package_name: &str, filename: &str) -> PyResult<Optio
     }
 }
 
+#[pyfunction]
+pub fn write_parsed_release_data(
+    data: HashMap<Version, Vec<pypi_releases::File>>,
+) -> anyhow::Result<String> {
+    Ok(serde_json::to_string(&data)?)
+}
+
+/// For some reason, passing in a string is actually more performant than reading the file in rust
+#[pyfunction]
+pub fn read_parsed_release_data(
+    cache_path: String,
+) -> anyhow::Result<HashMap<Version, Vec<pypi_releases::File>>> {
+    Ok(serde_json::from_str(&cache_path)?)
+}
+
 /// Returns the releases (version -> filenames), the ignored filenames and the invalid versions
 #[pyfunction]
 #[allow(clippy::type_complexity)] // Newtype would be worse for pyo3
 pub fn parse_releases_data(
     project: &str,
     filename: PathBuf,
-) -> PyResult<(HashMap<Version, Vec<String>>, Vec<String>, Vec<String>)> {
-    let mut releases: HashMap<Version, Vec<String>> = HashMap::new();
+) -> PyResult<(
+    HashMap<Version, Vec<pypi_releases::File>>,
+    Vec<String>,
+    Vec<String>,
+)> {
+    let mut releases: HashMap<Version, Vec<pypi_releases::File>> = HashMap::new();
     let mut ignored_filenames: Vec<String> = Vec::new();
     let mut invalid_versions: Vec<String> = Vec::new();
 
@@ -101,10 +120,7 @@ pub fn parse_releases_data(
 
         if let Some(version) = filename_to_version(project, &file.filename)? {
             match Version::from_str(&version) {
-                Ok(version) => releases
-                    .entry(version.clone())
-                    .or_default()
-                    .push(file.filename.clone()),
+                Ok(version) => releases.entry(version.clone()).or_default().push(file),
                 Err(_) => invalid_versions.push(version),
             }
         } else {

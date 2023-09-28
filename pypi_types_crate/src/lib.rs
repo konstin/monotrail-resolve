@@ -28,6 +28,8 @@ pub fn pypi_types(py: Python, module: &PyModule) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(helper::filename_to_version, py)?)?;
     module.add_function(wrap_pyfunction!(helper::parse_releases_data, py)?)?;
     module.add_function(wrap_pyfunction!(helper::collect_extras, py)?)?;
+    module.add_function(wrap_pyfunction!(helper::write_parsed_release_data, py)?)?;
+    module.add_function(wrap_pyfunction!(helper::read_parsed_release_data, py)?)?;
 
     let core_metadata_module = PyModule::new(py, "core_metadata")?;
     core_metadata::core_metadata(py, core_metadata_module)?;

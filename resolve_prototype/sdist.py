@@ -64,7 +64,7 @@ async def build_sdist(
     client: AsyncClient, file: pypi_releases.File, cache: Cache
 ) -> core_metadata.Metadata21:
     # TODO(konstin): Better cache key, outside of pypi this will cause cache collision
-    if metadata_path := cache.get_filename(
+    if metadata_path := cache.get_path(
         "sdist_build_metadata", file.filename + ".METADATA"
     ):
         if metadata_path.is_file():
@@ -81,7 +81,7 @@ async def build_sdist(
         except Exception as e:
             raise RuntimeError(
                 f"Failed to parse sdist built metadata for {file.filename}, "
-                f"this is most likely a bug"
+                "this is most likely a bug"
             ) from e
         cache.set(
             "sdist_build_metadata",
@@ -98,9 +98,10 @@ async def build_sdist_impl(
     logger.info(f"Downloading {file.filename}")
     downloaded_file = Path(tempdir).joinpath(file.filename)
     start = time.time()
-    async with aiofiles.open(downloaded_file, mode="wb") as f, client.stream(
-        "GET", file.url, headers={"user-agent": user_agent}
-    ) as response:
+    async with (
+        aiofiles.open(downloaded_file, mode="wb") as f,
+        client.stream("GET", file.url, headers={"user-agent": user_agent}) as response,
+    ):
         async for chunk in response.aiter_bytes():
             await f.write(chunk)
     end = time.time()
