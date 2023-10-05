@@ -126,7 +126,7 @@ async def get_releases(
     elif response.status_code == 304:
         assert cached
         logger.debug(f"Not modified, using cached for {url}")
-        return parse_releases_data(project, cached)
+        return read_parsed_release_data(cached)
     else:
         response.raise_for_status()
         raise RuntimeError(f"Unexpected status: {response.status_code}")

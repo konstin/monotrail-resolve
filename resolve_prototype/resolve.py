@@ -433,7 +433,7 @@ async def update_single_package(
     for version in sorted(state.versions_cache[name].keys(), reverse=maximum_versions):
         # TODO: proper prerelease handling (i.e. check the specifiers if they
         #  have consensus over pulling specific prerelease ranges in)
-        if version.any_prerelease() and name != "greenlet":
+        if version.any_prerelease():  # and name != "greenlet":
             continue
         is_compatible = True
         extras: set[str] = set()
@@ -453,9 +453,16 @@ async def update_single_package(
             break
     # TODO: Actually backtrack (pubgrub?)
     if not new_version:
+        constraints = state.requirements_per_package[name]
+        constraints = "\n".join(
+            sorted(
+                f"    {req} ({requester_name} {requester_version})"
+                for (req, (requester_name, requester_version)) in constraints
+            )
+        )
         raise RuntimeError(
             f"No compatible version for {name}.\n"
-            f"Constraints: {state.requirements_per_package[name]}.\n"
+            f"Constraints:\n{constraints}.\n"
             f"Versions: {sorted(state.versions_cache[name].keys())}"
         )
     # If we had the same constraints
@@ -788,7 +795,7 @@ def main():
     )
     print(freeze(resolution, root_requirement))
     end = time.time()
-    print(f"Took {end - start:.2f}s")
+    print(f"Took {end - start:.3f}s")
 
 
 if __name__ == "__main__":
