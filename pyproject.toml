@@ -44,10 +44,9 @@ addopts = "--tb=short"
 extend-select = ["B", "PT", "PTH", "TRY", "UP"]
 ignore = ["TRY003", "TRY400"]
 
-
-
 [tool.ruff.per-file-ignores]
 "pypi_types_crate/python/pypi_types/__init__.py" = ["F403"]
+"**/__init__.py" = ["F401"]
 
 [tool.black]
 skip_magic_trailing_comma = true
