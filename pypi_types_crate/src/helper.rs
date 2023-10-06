@@ -56,10 +56,12 @@ pub fn filename_to_version(package_name: &str, filename: &str) -> PyResult<Optio
             let version = &basename[file_prefix.len()..];
             Ok(Some(version.to_string()))
         } else {
-            return Err(PyValueError::new_err(format!(
-                "Name mismatch: Expected '{}' to start with '{}'",
-                basename_normalized, file_prefix
-            )));
+            // Ignore invalid non-wheels such as kfp.tar.gz
+            warn!(
+                "Name mismatch: Expected '{}' to start with '{}', but it was '{}'",
+                basename_normalized, file_prefix, filename
+            );
+            Ok(None)
         }
     } else if [".exe", ".msi", ".egg", ".rpm"]
         .iter()
