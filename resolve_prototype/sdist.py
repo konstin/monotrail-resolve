@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import shutil
@@ -5,13 +6,18 @@ import time
 from pathlib import Path
 from subprocess import CalledProcessError, run
 from tempfile import TemporaryDirectory
+from typing import TYPE_CHECKING
 
 import aiofiles
 from build import ProjectBuilder
-from httpx import AsyncClient
+from httpx import AsyncClient, AsyncBaseTransport
 
 from pypi_types import pypi_releases, core_metadata
-from resolve_prototype.common import user_agent, Cache
+from pypi_types.pep440_rs import Version
+from resolve_prototype.common import user_agent, Cache, NormalizedName, normalize
+
+if TYPE_CHECKING:
+    from resolve_prototype.resolve import State
 
 logger = logging.getLogger(__name__)
 
@@ -141,3 +147,37 @@ async def build_sdist_impl(
         lambda x: x.name.endswith(".dist-info"), metadata_dir.iterdir()
     )
     return dist_info.joinpath("METADATA")
+
+
+async def build_sdists(
+    state: "State",
+    cache: Cache,
+    sdists: list[tuple[NormalizedName, Version, pypi_releases.File]],
+    transport: AsyncBaseTransport,
+):
+    # Download and PEP 517 query sdists for metadata
+    logger.info(
+        f"Building {[f'{name} {version}' for (name, version, _filename) in sdists]}"
+    )
+    async with AsyncClient(http2=True, transport=transport) as client:
+        metadatas = await asyncio.gather(
+            *[build_sdist(client, sdist[2], cache) for sdist in sdists]
+        )
+    for (name, version, _filename), metadata in sorted(
+        zip(sdists, metadatas, strict=True)
+    ):
+        state.wheel_metadata[(name, version)] = metadata
+        state.metadata_requirements[(name, version)] = metadata.requires_dist
+        state.changed_metadata[(name, version)] = state.metadata_requirements[
+            (name, version)
+        ]
+        state.resolved_sdists.add((name, version))
+        if name not in state.queue:
+            state.queue.append(name)
+
+        for added in sorted(metadata.requires_dist, key=str):
+            state.requirements_per_package[normalize(added.name)].add(
+                (added, (name, version))
+            )
+            if normalize(added.name) not in state.queue:
+                state.queue.append(normalize(added.name))

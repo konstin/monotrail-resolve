@@ -18,11 +18,8 @@ from pypi_types import pypi_releases, filename_to_version, core_metadata
 from pypi_types.pep440_rs import VersionSpecifiers
 from pypi_types.pep508_rs import Requirement
 from resolve_prototype.common import Cache, default_cache_dir
-from resolve_prototype.resolve import (
-    parse_requirement_fixup,
-    resolve_requirement,
-    Resolution,
-)
+from resolve_prototype.resolve import resolve_requirement, Resolution
+from resolve_prototype.metadata import parse_requirement_fixup
 
 update_snapshots = os.environ.get("UPDATE_SNAPSHOTS")
 assert_all_mocked = not update_snapshots
@@ -255,7 +252,7 @@ async def test_meine_stadt_transparent(
         "meine_stadt_transparent", pytestconfig.rootpath
     )
     with patch(
-        "resolve_prototype.resolve.build_sdist", sdist_metadata_mock.mock_build_sdist
+        "resolve_prototype.sdist.build_sdist", sdist_metadata_mock.mock_build_sdist
     ):
         requires_python = VersionSpecifiers(">= 3.8")
         resolution = await resolve_requirement(
