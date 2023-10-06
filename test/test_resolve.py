@@ -15,10 +15,14 @@ from respx import MockRouter
 from zstandard import decompress, compress
 
 from pypi_types import pypi_releases, filename_to_version, core_metadata
-from pypi_types.pep440_rs import VersionSpecifier
+from pypi_types.pep440_rs import VersionSpecifiers
 from pypi_types.pep508_rs import Requirement
 from resolve_prototype.common import Cache, default_cache_dir
-from resolve_prototype.resolve import parse_requirement_fixup, resolve, Resolution
+from resolve_prototype.resolve import (
+    parse_requirement_fixup,
+    resolve_requirement,
+    Resolution,
+)
 
 update_snapshots = os.environ.get("UPDATE_SNAPSHOTS")
 assert_all_mocked = not update_snapshots
@@ -230,8 +234,8 @@ async def test_pandas(respx_mock: MockRouter, pytestconfig: pytest.Config):
     http_mock = HttpMock(pytestconfig.rootpath, "pandas")
     http_mock.add_mocks(respx_mock)
 
-    requires_python = VersionSpecifier(">= 3.8")
-    resolution = await resolve(
+    requires_python = VersionSpecifiers(">= 3.8")
+    resolution = await resolve_requirement(
         Requirement("pandas"),
         requires_python,
         TrimmedMetadataCache(default_cache_dir, read=False, write=False),
@@ -253,8 +257,8 @@ async def test_meine_stadt_transparent(
     with patch(
         "resolve_prototype.resolve.build_sdist", sdist_metadata_mock.mock_build_sdist
     ):
-        requires_python = VersionSpecifier(">= 3.8")
-        resolution = await resolve(
+        requires_python = VersionSpecifiers(">= 3.8")
+        resolution = await resolve_requirement(
             Requirement("meine_stadt_transparent"),
             requires_python,
             TrimmedMetadataCache(default_cache_dir, read=False, write=False),
@@ -271,8 +275,8 @@ async def test_matplotlib(respx_mock: MockRouter, pytestconfig: pytest.Config):
     http_mock = HttpMock(pytestconfig.rootpath, "matplotlib")
     http_mock.add_mocks(respx_mock)
     cache_dir = pytestconfig.rootpath.joinpath("test-data").joinpath("fake_cache")
-    requires_python = VersionSpecifier(">= 3.8")
-    resolution = await resolve(
+    requires_python = VersionSpecifiers(">= 3.8")
+    resolution = await resolve_requirement(
         Requirement("matplotlib"),
         requires_python,
         TrimmedMetadataCache(cache_dir, read=True, write=True),

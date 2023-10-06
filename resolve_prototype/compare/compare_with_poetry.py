@@ -12,7 +12,7 @@ from resolve_prototype.compare.poetry_lock import (
     read_poetry_requirements_current,
     poetry_export,
 )
-from resolve_prototype.resolve import resolve, Resolution
+from resolve_prototype.resolve import resolve_requirement, Resolution
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ def compare_with_poetry(
         f"=={sys.version_info.major}.{sys.version_info.minor}"
     )
     ours_resolution: Resolution = asyncio.run(
-        resolve(
+        resolve_requirement(
             root_requirement,
             requires_python,
             Cache(default_cache_dir, refresh_versions=refresh),

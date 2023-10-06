@@ -11,7 +11,7 @@ from pypi_types.pep440_rs import VersionSpecifier
 from pypi_types.pep508_rs import Requirement
 from resolve_prototype.common import Cache, default_cache_dir, normalize
 from resolve_prototype.compare.common import resolutions_ours, resolutions_poetry
-from resolve_prototype.resolve import Resolution, resolve
+from resolve_prototype.resolve import Resolution, resolve_requirement
 
 root_requirement = Requirement("ibis-framework[all]")
 minimum_python_minor = 8
@@ -20,7 +20,7 @@ requires_python = VersionSpecifier(f">=3.{minimum_python_minor}")
 if len(sys.argv) == 2:
     root_requirement = Requirement(sys.argv[1])
 resolution: Resolution = asyncio.run(
-    resolve(
+    resolve_requirement(
         root_requirement,
         requires_python,
         Cache(default_cache_dir, refresh_versions=False),

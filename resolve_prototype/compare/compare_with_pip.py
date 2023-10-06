@@ -11,7 +11,7 @@ from resolve_prototype.compare.pip_freeze import (
     pip_venv_dir,
     read_pip_report,
 )
-from resolve_prototype.resolve import resolve, Resolution
+from resolve_prototype.resolve import resolve_requirement, Resolution
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ def compare_with_pip(
         f"=={sys.version_info.major}.{sys.version_info.minor}"
     )
     ours_resolution: Resolution = asyncio.run(
-        resolve(root_requirement, requires_python, Cache(default_cache_dir))
+        resolve_requirement(root_requirement, requires_python, Cache(default_cache_dir))
     )
     ours_resolution_env: Resolution = ours_resolution.for_environment(env, [])
     pip_resolution = {

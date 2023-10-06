@@ -292,7 +292,7 @@ class Resolution:
         return Resolution(root=env_root, package_data=env_package_data)
 
 
-def query_wheel_metadata(state: State, cache: Cache):
+async def query_wheel_metadata(state: State, cache: Cache):
     """Actually download the wheel metadata from the exact section of the zip.
 
     Here we only want to check for those where requires_dist is empty. That is because
@@ -382,11 +382,16 @@ def query_wheel_metadata(state: State, cache: Cache):
             for requirement in state.pypi_metadata[(name, version)].requires_dist or []
         ]
         if pypi_requirements != metadata.requires_dist:
-            logger.warning(
-                f"Diverging requires_dist metadata for {name} {version}:\n"
-                f"pypi json api: {pypi_requirements}\n"
-                f"wheel metadata: {metadata.requires_dist}"
-            )
+            if not pypi_requirements:
+                logger.debug(
+                    f"Missing requires_dist pypi metadata for {name} {version}"
+                )
+            else:
+                logger.warning(
+                    f"Diverging requires_dist metadata for {name} {version}:\n"
+                    f"pypi json api: {pypi_requirements}\n"
+                    f"wheel metadata: {metadata.requires_dist}"
+                )
             for removed in set(pypi_requirements) - set(metadata.requires_dist):
                 state.requirements_per_package[normalize(removed.name)].remove(
                     (removed, (name, version))
@@ -683,15 +688,17 @@ async def fetch_versions_and_metadata(
     state.fetch_metadata.clear()
 
 
-async def resolve(
+async def resolve_requirement(
     root_requirement: Requirement,
     requires_python: VersionSpecifiers,
     cache: Cache,
     download_wheels: bool = True,
     maximum_versions: bool = True,
     executor: type[Executor] = ThreadPoolExecutor,
+    transport: httpx.AsyncHTTPTransport | None = None,
 ) -> Resolution:
-    transport = httpx.AsyncHTTPTransport(retries=3)
+    if not transport:
+        transport = httpx.AsyncHTTPTransport(retries=3)
 
     # Generate list of compatible python versions for shrinking down the list of
     # dependencies. This is done to avoid implementing PEP 440 version specifier
@@ -700,7 +707,7 @@ async def resolve(
     python_versions = []
     for minor in range(MINIMUM_SUPPORTED_PYTHON_MINOR, 101):
         version = Version(f"3.{minor}")
-        if version in requires_python:
+        if all(version in i for i in requires_python):
             python_versions.append(version)
     if Version("4.0") in requires_python:
         python_versions.append(Version("4.0"))
@@ -741,7 +748,7 @@ async def resolve(
 
         # Allow to skip this step
         if download_wheels:
-            query_wheel_metadata(state, cache)
+            await query_wheel_metadata(state, cache)
 
         # We found some METADATA for missing requires_dist, we can resolve further
         # before building sdists
@@ -761,7 +768,7 @@ async def resolve(
         break
 
     end = time.time()
-    print(f"resolution ours took {end - start:.3f}s")
+    logger.info(f"resolution ours took {end - start:.3f}s")
 
     package_data = {}
     for name, (version, _extras) in sorted(state.candidates.items()):
@@ -832,7 +839,7 @@ def main():
         root_requirement = Requirement(sys.argv[1])
     start = time.time()
     resolution: Resolution = asyncio.run(
-        resolve(
+        resolve_requirement(
             root_requirement,
             requires_python,
             Cache(default_cache_dir, refresh_versions=args.refresh_versions),

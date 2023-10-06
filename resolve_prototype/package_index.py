@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 from collections import defaultdict
@@ -101,7 +102,9 @@ async def get_releases(
     cached = cache.get("pypi_simple_releases", normalize(project) + ".json")
     if cached and not refresh and not cache.refresh_versions:
         logger.info(f"Using cached parsed releases for {url}")
-        return read_parsed_release_data(cached)
+        return await asyncio.get_event_loop().run_in_executor(
+            None, read_parsed_release_data, cached
+        )
 
     etag = cache.get("pypi_simple_releases", normalize(project) + ".etag")
     logger.debug(f"Querying releases from {url}")

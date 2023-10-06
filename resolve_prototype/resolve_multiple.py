@@ -8,7 +8,7 @@ from argparse import ArgumentParser
 from pypi_types.pep440_rs import VersionSpecifier
 from pypi_types.pep508_rs import Requirement
 from resolve_prototype.common import Cache, default_cache_dir
-from resolve_prototype.resolve import Resolution, resolve, freeze
+from resolve_prototype.resolve import Resolution, resolve_requirement, freeze
 
 
 def main():
@@ -25,7 +25,9 @@ def main():
         for requirement in args.requirement:
             root_requirement = Requirement(requirement)
             resolution: Resolution = asyncio.run(
-                resolve(root_requirement, requires_python, Cache(default_cache_dir))
+                resolve_requirement(
+                    root_requirement, requires_python, Cache(default_cache_dir)
+                )
             )
             freeze(resolution, root_requirement)
 
