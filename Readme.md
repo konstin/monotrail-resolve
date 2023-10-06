@@ -38,8 +38,14 @@ meine_stadt_transparent
 transformers[torch,sentencepiece,tokenizers,torch-speech,vision,integrations,timm,torch-vision,codecarbon,accelerate,video]
 # relevant and slow with poetry
 ibis-framework[all]
+```
+
+Failing:
+
+```text
 # another huge ML tree 
 bio_embeddings[all]
+pretix
 ```
 
 ## Testing

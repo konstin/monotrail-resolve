@@ -114,17 +114,19 @@ async def get_releases(
     if response.status_code == 200:
         logger.debug(f"New response for {url}")
         data = response.text
-        if etag := response.headers.get("etag"):
-            cache.set("pypi_simple_releases", normalize(project) + ".etag", etag)
         parsed_data = parse_releases_data(project, data)
         cache.set(
             "pypi_simple_releases",
             normalize(project) + ".json",
             write_parsed_release_data(parsed_data),
         )
+        # Set the etag last to be interruption safe, etag expects cached for 304
+        # responses
+        if etag := response.headers.get("etag"):
+            cache.set("pypi_simple_releases", normalize(project) + ".etag", etag)
         return parsed_data
     elif response.status_code == 304:
-        assert cached
+        assert cached, cache.path("pypi_simple_releases", normalize(project) + ".etag")
         logger.debug(f"Not modified, using cached for {url}")
         return read_parsed_release_data(cached)
     else:

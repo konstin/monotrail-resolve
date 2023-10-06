@@ -54,7 +54,7 @@ import tomli_w
 from httpx import AsyncClient, AsyncBaseTransport
 
 from pypi_types import pypi_releases, pypi_metadata, core_metadata
-from pypi_types.pep440_rs import Version, VersionSpecifier
+from pypi_types.pep440_rs import Version, VersionSpecifiers
 from pypi_types.pep508_rs import Pep508Error, Requirement, MarkerEnvironment
 from resolve_prototype.common import (
     default_cache_dir,
@@ -430,10 +430,23 @@ async def update_single_package(
     # possible version
     new_version = None
     new_extras: set[str] = set()
+
+    requirements = state.requirements_per_package[name]
+    allowed_preleases = get_allowed_prereleases(requirements)
+    # Only prereleases? We have to pick a prerelease, so they are all allowed
+    # iirc pip added this behaviour for black. TODO: Find the issue/PR
+    # The all should be fast because it should short-circuit
+    if not allowed_preleases and all(
+        version.any_prerelease() for version in state.versions_cache[name].keys()
+    ):
+        allowed_preleases = set(
+            tuple(version.release) for version in state.versions_cache[name].keys()
+        )
+
     for version in sorted(state.versions_cache[name].keys(), reverse=maximum_versions):
         # TODO: proper prerelease handling (i.e. check the specifiers if they
         #  have consensus over pulling specific prerelease ranges in)
-        if version.any_prerelease():  # and name != "greenlet":
+        if version.any_prerelease() and tuple(version.release) not in allowed_preleases:
             continue
         is_compatible = True
         extras: set[str] = set()
@@ -460,10 +473,11 @@ async def update_single_package(
                 for (req, (requester_name, requester_version)) in constraints
             )
         )
+        versions = list(str(i) for i in sorted(state.versions_cache[name].keys()))
         raise RuntimeError(
             f"No compatible version for {name}.\n"
             f"Constraints:\n{constraints}.\n"
-            f"Versions: {sorted(state.versions_cache[name].keys())}"
+            f"Versions: {versions}"
         )
     # If we had the same constraints
     if (name, new_version) in state.changed_metadata:
@@ -523,6 +537,37 @@ async def update_single_package(
         if new not in old_requirements and normalize(new.name) not in state.queue:
             logger.debug(f"Queuing {normalize(new.name)}")
             state.queue.append(normalize(new.name))
+
+
+def get_allowed_prereleases(requirements: list[Requirement]) -> set[tuple[int]]:
+    # We allow prereleases for a specific stable release if all requirements have a
+    # prerelease specifier for it. Since a requirement can have multiple specifier
+    # which may have multiple prereleases, we use sets.
+    allowed_preleases = None
+    for requirement, _ in requirements:
+        # Blank requirements mean prereleases are banned(?, blank requirements are bad)
+        if not requirement.version_or_url:
+            return set()
+        # TODO: url
+        # Shortcut
+        if not any(
+            specifier.version.any_prerelease()
+            for specifier in requirement.version_or_url
+        ):
+            return set()
+        release_with_pre = set()
+        for specifier in requirement.version_or_url:
+            if specifier.version.any_prerelease():
+                release_with_pre.add(tuple(specifier.version.release))
+        if allowed_preleases is None:
+            allowed_preleases = release_with_pre
+        else:
+            # Only those that are allowed by all stable releases
+            allowed_preleases = allowed_preleases & release_with_pre
+        # Optimization
+        if not allowed_preleases:
+            return set()
+    return allowed_preleases or {}
 
 
 async def build_sdists(
@@ -640,7 +685,7 @@ async def fetch_versions_and_metadata(
 
 async def resolve(
     root_requirement: Requirement,
-    requires_python: VersionSpecifier,
+    requires_python: VersionSpecifiers,
     cache: Cache,
     download_wheels: bool = True,
     maximum_versions: bool = True,
@@ -768,7 +813,7 @@ def main():
 
     parser = ArgumentParser()
     parser.add_argument("--refresh-versions", action="store_true")
-    parser.add_argument("--requires-python", default=">= 3.7")
+    parser.add_argument("--requires-python", default=">=3.7,<3.12")
     parser.add_argument("requirement")
     args = parser.parse_args()
 
@@ -781,7 +826,7 @@ def main():
     # root_requirement = Requirement("ibis-framework[all]")
     # root_requirement = Requirement("bio_embeddings[all]")
 
-    requires_python = VersionSpecifier(args.requires_python)
+    requires_python = VersionSpecifiers(args.requires_python)
 
     if len(sys.argv) == 2:
         root_requirement = Requirement(sys.argv[1])
