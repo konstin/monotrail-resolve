@@ -47,11 +47,12 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, Executor
 from dataclasses import dataclass
 from collections.abc import Iterable
+from typing import Any
 
 import httpx
 import tomli_w
 
-from pypi_types import pypi_releases, pypi_metadata, core_metadata
+from pypi_types import pypi_releases
 from pypi_types.pep440_rs import Version, VersionSpecifiers
 from pypi_types.pep508_rs import Requirement, MarkerEnvironment
 from resolve_prototype.common import (
@@ -62,7 +63,11 @@ from resolve_prototype.common import (
     normalize,
 )
 from resolve_prototype.compare.common import resolutions_ours
-from resolve_prototype.metadata import query_wheel_metadata, fetch_versions_and_metadata
+from resolve_prototype.metadata import (
+    get_deps_for_versions,
+    fetch_versions_and_metadata,
+)
+from resolve_prototype.package_index import get_files_for_version
 from resolve_prototype.sdist import build_sdists
 
 logger = logging.getLogger(__name__)
@@ -84,18 +89,14 @@ class State:
     resolved_sdists: set[tuple[NormalizedName, Version]]
 
     # package name -> list of versions and the files (sdist and wheel only) from pypi
-    versions_cache: dict[NormalizedName, dict[Version, list[pypi_releases.File]]]
-    # The requirements for specific package version, either from wheel_metadata, or if
-    # that isn't available (yet),from pypi_metadata. Extra fields because there can be
-    # parsing errors with the pypi metadata
-    metadata_requirements: dict[tuple[NormalizedName, Version], list[Requirement]]
-    # (package name, package version) -> pypi metadata, possibly wrong given
-    # wheel_metadata
-    pypi_metadata: dict[tuple[NormalizedName, Version], pypi_metadata.Metadata]
-    # (package name, package version) -> metadata from a while from pypi
-    wheel_metadata: dict[tuple[NormalizedName, Version], core_metadata.Metadata21]
-    # (wheel filename) -> METADATA contents
-    wheel_file_metadata: dict[str, core_metadata.Metadata21]
+    versions_cache_new: dict[NormalizedName, list[Version]]
+    files_cache: dict[NormalizedName, dict[Version, list[pypi_releases.File]]]
+    # The requirements for specific package version, either `requiress_dist`
+    # wheel metadata, or if that isn't available (yet), from pypi metadata.
+    requirements: dict[tuple[NormalizedName, Version], list[Requirement]]
+    # Track separately if the metadata is from a wheel (credible) or from pypi
+    # (occasionally wrong)
+    requirements_credible: set[tuple[NormalizedName, Version]]
     # Reprocess this even if the version stayed the same
     # Stores a list of the old requirements so we can remove them
     changed_metadata: dict[tuple[NormalizedName, Version], list[Requirement]]
@@ -118,11 +119,11 @@ class State:
         self.fetch_versions = set()
         self.fetch_metadata = {}
         self.resolved_sdists = set()
-        self.versions_cache = {}
-        self.metadata_requirements = {}
-        self.pypi_metadata = {}
-        self.wheel_metadata = {}
-        self.wheel_file_metadata = {}
+        # TODO: remove the _new suffix
+        self.versions_cache_new = {}
+        self.files_cache = {}
+        self.requirements = {}
+        self.requirements_credible = set()
         self.changed_metadata = {}
         self.requirements_per_package = defaultdict(set)
         self.candidates = {}
@@ -140,24 +141,6 @@ class State:
         for entry in data:
             assert entry == normalize(entry), entry
 
-    def assert_normalization(self):
-        """:/"""
-        self.assert_list_normalization(self.user_constraints.keys())
-        self.assert_list_normalization(self.queue)
-        self.assert_list_normalization(self.fetch_versions)
-        self.assert_list_normalization(self.fetch_metadata.keys())
-        self.assert_list_normalization([i[0] for i in self.resolved_sdists])
-        self.assert_list_normalization([i[0] for i in self.versions_cache])
-        self.assert_list_normalization([i[0] for i in self.versions_cache])
-        self.assert_list_normalization(
-            [i[0] for i in self.metadata_requirements.keys()]
-        )
-        self.assert_list_normalization([i[0] for i in self.pypi_metadata.keys()])
-        self.assert_list_normalization([i[0] for i in self.wheel_metadata.keys()])
-        self.assert_list_normalization([i[0] for i in self.changed_metadata.keys()])
-        self.assert_list_normalization(self.requirements_per_package.keys())
-        self.assert_list_normalization(self.candidates.keys())
-
 
 @dataclass
 class ReleaseData:
@@ -167,8 +150,6 @@ class ReleaseData:
     unnormalized_name: str
     # The requirements read from the wheel or the PEP 517 api with fixups
     requirements: list[Requirement]
-    # Metadata read from the wheel
-    metadata: core_metadata.Metadata21
     # The list of files for this release
     files: list[pypi_releases.File]
     # The list of all extras in our resolution, which is a non-strict subset of all
@@ -276,7 +257,7 @@ async def update_single_package(
         return
     logger.debug(f"Processing {name}")
     # First time we're encountering this package?
-    if name not in state.versions_cache:
+    if name not in state.versions_cache_new:
         logger.debug(f"Missing versions for {name}, delaying")
         state.fetch_versions.add(name)
         return
@@ -291,13 +272,13 @@ async def update_single_package(
     # iirc pip added this behaviour for black. TODO: Find the issue/PR
     # The all should be fast because it should short-circuit
     if not allowed_preleases and all(
-        version.any_prerelease() for version in state.versions_cache[name].keys()
+        version.any_prerelease() for version in state.versions_cache_new[name]
     ):
         allowed_preleases = set(
-            tuple(version.release) for version in state.versions_cache[name].keys()
+            tuple(version.release) for version in state.versions_cache_new[name]
         )
 
-    for version in sorted(state.versions_cache[name].keys(), reverse=maximum_versions):
+    for version in sorted(state.versions_cache_new[name], reverse=maximum_versions):
         # TODO: proper prerelease handling (i.e. check the specifiers if they
         #  have consensus over pulling specific prerelease ranges in)
         if version.any_prerelease() and tuple(version.release) not in allowed_preleases:
@@ -305,7 +286,7 @@ async def update_single_package(
         is_compatible = True
         extras: set[str] = set()
 
-        logger.debug(name, version, state.requirements_per_package[name])
+        logger.debug(f"{name} {version} {state.requirements_per_package[name]}")
         for requirement, _source in state.requirements_per_package[name]:
             extras.update(set(requirement.extras or []))
             if not requirement.version_or_url:
@@ -327,7 +308,9 @@ async def update_single_package(
                 for (req, (requester_name, requester_version)) in constraints
             )
         )
-        versions = list(str(i) for i in sorted(state.versions_cache[name].keys()))
+        versions = list(
+            str(i).replace("'", "") for i in sorted(state.versions_cache_new[name])
+        )
         raise RuntimeError(
             f"No compatible version for {name}.\n"
             f"Constraints:\n{constraints}.\n"
@@ -353,7 +336,7 @@ async def update_single_package(
         else:
             logger.debug(f"Picking {name} {new_version} {new_extras}")
     # Do we actually already know the requires_dist for this new candidate?
-    if (name, new_version) not in state.pypi_metadata:
+    if (name, new_version) not in state.requirements:
         logger.debug(f"Missing metadata for {name} {new_version}, delaying")
         # If we had chosen a higher version to fetch in previous iteration,
         # overwrite
@@ -365,7 +348,7 @@ async def update_single_package(
         if changed_requirement is not None:
             old_requirements = changed_requirement
         else:
-            old_requirements = state.metadata_requirements[(name, old_version)]
+            old_requirements = state.requirements[(name, old_version)]
         for old in old_requirements:
             if not old.evaluate_extras_and_python_version(old_extras, python_versions):
                 continue
@@ -380,7 +363,7 @@ async def update_single_package(
                 state.queue.append(normalize(old.name))
     else:
         old_requirements = []
-    for new in state.metadata_requirements[(name, new_version)]:
+    for new in state.requirements[(name, new_version)]:
         if not new.evaluate_extras_and_python_version(new_extras, python_versions):
             continue
         state.requirements_per_package[normalize(new.name)].add(
@@ -393,7 +376,9 @@ async def update_single_package(
             state.queue.append(normalize(new.name))
 
 
-def get_allowed_prereleases(requirements: list[Requirement]) -> set[tuple[int]]:
+def get_allowed_prereleases(
+    requirements: Iterable[tuple[Requirement, Any]]
+) -> set[tuple[int]]:
     # We allow prereleases for a specific stable release if all requirements have a
     # prerelease specifier for it. Since a requirement can have multiple specifier
     # which may have multiple prereleases, we use sets.
@@ -425,21 +410,24 @@ def get_allowed_prereleases(requirements: list[Requirement]) -> set[tuple[int]]:
 
 
 async def find_sdists_for_build(
-    state: State,
+    state: State, cache: Cache
 ) -> list[tuple[NormalizedName, Version, pypi_releases.File]]:
     sdists = []
     for name, (version, _extras) in state.candidates.items():
         if (name, version) in state.resolved_sdists:
             continue
+        if version not in state.files_cache.setdefault(name, {}):
+            state.files_cache[name][version] = get_files_for_version(
+                cache, name, version
+            )
         if not any(
-            file.filename.endswith(".whl")
-            for file in state.versions_cache[name][version]
+            file.filename.endswith(".whl") for file in state.files_cache[name][version]
         ):
             try:
-                [sdist] = state.versions_cache[name][version]
+                [sdist] = state.files_cache[name][version]
             except ValueError:
                 sdist_list = [
-                    file.filename for file in state.versions_cache[name][version]
+                    file.filename for file in state.files_cache[name][version]
                 ]
                 raise RuntimeError(
                     f"Expected exactly one sdist, found {sdist_list}"
@@ -506,9 +494,8 @@ async def resolve_requirement(
             state.queue.sort()
             continue
 
-        # Allow to skip this step
-        if download_wheels:
-            await query_wheel_metadata(state, cache)
+        if download_wheels:  # Allow to skip this step
+            await get_deps_for_versions(state, cache)
 
         # We found some METADATA for missing requires_dist, we can resolve further
         # before building sdists
@@ -518,7 +505,7 @@ async def resolve_requirement(
 
         # Everything else is resolved, time for the slowest part:
         # Do we have sdist for which we don't know the metadata yet?
-        sdists = await find_sdists_for_build(state)
+        sdists = await find_sdists_for_build(state, cache)
         if sdists:
             await build_sdists(state, cache, sdists, transport)
             continue
@@ -533,13 +520,9 @@ async def resolve_requirement(
     package_data = {}
     for name, (version, _extras) in sorted(state.candidates.items()):
         package_data[(name, version)] = ReleaseData(
-            unnormalized_name=state.pypi_metadata[(name, version)].name,
-            requirements=state.metadata_requirements[(name, version)],
-            # Currently, we only use the wheel metadata if the pypi requires_dist was
-            # empty
-            metadata=state.wheel_metadata.get((name, version))
-            or state.pypi_metadata[(name, version)],
-            files=state.versions_cache[name][version],
+            unnormalized_name=name,  # Normalization handling
+            requirements=state.requirements[(name, version)],
+            files=state.files_cache[name][version],
             extras=state.candidates[name][1],
         )
 

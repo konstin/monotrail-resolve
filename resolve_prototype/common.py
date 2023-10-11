@@ -1,6 +1,7 @@
 import logging
 import random
 import re
+import string
 from pathlib import Path
 from typing import NewType
 
@@ -60,14 +61,24 @@ class Cache:
         except FileNotFoundError:
             return None
 
+    def get_bytes(self, bucket: str, name: str) -> bytes | None:
+        if not self.read:
+            return None
+
+        filename = self.path(bucket, name)
+        # Avoid an expensive is_file call
+        try:
+            return filename.read_bytes()
+        except FileNotFoundError:
+            return None
+
     def set(self, bucket: str, name: str, content: str):
         if not self.write:
             return False
         filename = self.path(bucket, name)
         filename.parent.mkdir(exist_ok=True, parents=True)
         # tempfile to avoid broken cache entry
-        characters = "abcdefghijklmnopqrstuvwxyz0123456789_"
-        temp_name = "".join(random.choices(characters, k=8))
+        temp_name = "".join(random.choices(string.hexdigits, k=8))
         temp_file = filename.parent.joinpath(temp_name)
         temp_file.write_text(content)
         temp_file.replace(filename)

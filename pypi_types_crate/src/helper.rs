@@ -63,7 +63,7 @@ pub fn filename_to_version(package_name: &str, filename: &str) -> PyResult<Optio
             );
             Ok(None)
         }
-    } else if [".exe", ".msi", ".egg", ".rpm"]
+    } else if [".exe", ".msi", ".egg", ".rpm", ".dmg"]
         .iter()
         .any(|suffix| filename.ends_with(suffix))
     {
@@ -84,9 +84,9 @@ pub fn write_parsed_release_data(
 /// For some reason, passing in a string is actually more performant than reading the file in rust
 #[pyfunction]
 pub fn read_parsed_release_data(
-    cache_path: String,
+    data: &[u8],
 ) -> anyhow::Result<HashMap<Version, Vec<pypi_releases::File>>> {
-    Ok(serde_json::from_str(&cache_path)?)
+    Ok(serde_json::from_slice(data)?)
 }
 
 /// Returns the releases (version -> filenames), the ignored filenames and the invalid versions

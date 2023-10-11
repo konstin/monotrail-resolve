@@ -179,8 +179,8 @@ pub struct Vulnerability {
 }
 
 #[pyfunction]
-pub fn parse(text: &str) -> anyhow::Result<Welcome> {
-    Ok(serde_json::from_str(text)?)
+pub fn parse(data: &[u8]) -> anyhow::Result<Welcome> {
+    Ok(serde_json::from_slice(data)?)
 }
 
 #[pyfunction]

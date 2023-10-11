@@ -166,11 +166,9 @@ async def build_sdists(
     for (name, version, _filename), metadata in sorted(
         zip(sdists, metadatas, strict=True)
     ):
-        state.wheel_metadata[(name, version)] = metadata
-        state.metadata_requirements[(name, version)] = metadata.requires_dist
-        state.changed_metadata[(name, version)] = state.metadata_requirements[
-            (name, version)
-        ]
+        state.requirements[(name, version)] = metadata.requires_dist
+        state.requirements_credible.add((name, version))
+        state.changed_metadata[(name, version)] = state.requirements[(name, version)]
         state.resolved_sdists.add((name, version))
         if name not in state.queue:
             state.queue.append(name)

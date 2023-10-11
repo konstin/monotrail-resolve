@@ -21,11 +21,21 @@ def read_pip_report(root_requirement: pep508_rs.Requirement) -> dict[str, str]:
     }
 
 
-def pip_resolve(root_requirement: pep508_rs.Requirement) -> dict[str, str]:
+def pip_resolve(
+    root_requirement: pep508_rs.Requirement, python_version: tuple[int, int]
+) -> dict[str, str]:
     assert "/" not in str(root_requirement)
     resolutions_pip.mkdir(exist_ok=True)
     venv_dir = pip_venv_dir(root_requirement)
-    check_call(["virtualenv", "--clear", venv_dir])
+    check_call(
+        [
+            "virtualenv",
+            "--clear",
+            "-p",
+            f"{python_version[0]}.{python_version[1]}",
+            venv_dir,
+        ]
+    )
     start = time.time()
     pip_bin = venv_dir.joinpath("bin").joinpath("pip")
     report_file = resolutions_pip.joinpath(f"{root_requirement}.json")

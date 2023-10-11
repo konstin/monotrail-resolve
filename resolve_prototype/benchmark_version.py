@@ -10,7 +10,7 @@ from pypi_types.pep440_rs import Version
 from resolve_prototype.common import default_cache_dir
 
 
-def main():
+def run():
     start = time.time()
     for file in default_cache_dir.joinpath("pypi_simple_releases").iterdir():
         invalid_versions = []
@@ -37,12 +37,16 @@ def main():
     print(f"{end - start:.2}s {end2 - start2:.2}s")
 
 
-if __name__ == "__main__":
+def main():
     start = time.time()
     if len(sys.argv) == 2:
         for _ in range(int(sys.argv[1])):
-            main()
+            run()
     else:
-        main()
+        run()
     end = time.time()
     print(f"{end - start:.2}s")
+
+
+if __name__ == "__main__":
+    main()

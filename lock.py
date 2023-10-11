@@ -116,12 +116,12 @@ for (name, version), package_data in sorted(resolution.package_data.items()):
                 requirement
             )
 
-    print(name, package_data.metadata.summary)
-    python_version = str(package_data.metadata.requires_python or "*")
+    # TODO: Actually store some metadata
+    python_version = "*"  # str(package_data.metadata.requires_python or "*")
     data = {
         "name": name,
         "version": str(version),
-        "description": package_data.metadata.summary or "",
+        "description": "",  # TODO: Keep summary around
         "category": "main",
         "optional": False,
         # poetry version specifier normalization

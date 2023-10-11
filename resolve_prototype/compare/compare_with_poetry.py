@@ -4,7 +4,7 @@ import sys
 from subprocess import check_call
 
 from pypi_types import pep508_rs
-from pypi_types.pep440_rs import VersionSpecifier
+from pypi_types.pep440_rs import VersionSpecifiers
 from resolve_prototype.common import Cache, default_cache_dir
 from resolve_prototype.compare.poetry_lock import (
     poetry_dir,
@@ -41,7 +41,7 @@ def compare_with_poetry(
         )
         poetry_current = read_poetry_requirements_current(root_requirement)
     logger.info(f"Resolving {root_requirement} with ours")
-    requires_python = VersionSpecifier(
+    requires_python = VersionSpecifiers(
         f"=={sys.version_info.major}.{sys.version_info.minor}"
     )
     ours_resolution: Resolution = asyncio.run(

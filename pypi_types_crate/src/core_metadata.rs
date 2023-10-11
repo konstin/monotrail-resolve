@@ -160,6 +160,16 @@ impl Metadata21 {
     }
 
     #[staticmethod]
+    pub fn from_json(data: &[u8]) -> anyhow::Result<Self> {
+        Ok(serde_json::from_slice(data)?)
+    }
+
+    /// TODO: bytes not String
+    pub fn to_json(&self) -> anyhow::Result<String> {
+        Ok(serde_json::to_string(self)?)
+    }
+
+    #[staticmethod]
     pub fn from_bytes(data: &[u8], debug_src: Option<String>) -> PyResult<Self> {
         // TODO(konstin): Forward the error properly
         Ok(Self::parse(data, debug_src).map_err(anyhow::Error::from)?)

@@ -1,5 +1,6 @@
 //! For data from e.g. <https://pypi.org/simple/tqdm/?format=application/vnd.pypi.simple.v1+json>
 
+use pep440_rs::Version;
 use pyo3::basic::CompareOp;
 use pyo3::exceptions::PyNotImplementedError;
 use pyo3::types::PyModule;
@@ -52,6 +53,16 @@ impl File {
     fn __repr__(&self) -> String {
         self.filename.clone()
     }
+
+    #[staticmethod]
+    fn vec_to_json(data: Vec<File>) -> anyhow::Result<String> {
+        Ok(serde_json::to_string(&data)?)
+    }
+
+    #[staticmethod]
+    fn vec_from_json(data: &[u8]) -> anyhow::Result<Vec<File>> {
+        Ok(serde_json::from_slice(data)?)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
@@ -94,13 +105,19 @@ pub struct Meta {
 }
 
 #[pyfunction]
-pub fn parse(text: &str) -> anyhow::Result<PypiReleases> {
-    Ok(serde_json::from_str(text)?)
+pub fn parse(data: &[u8]) -> anyhow::Result<PypiReleases> {
+    Ok(serde_json::from_slice(data)?)
+}
+
+#[pyfunction]
+pub fn versions_from_json(data: &[u8]) -> anyhow::Result<Vec<Version>> {
+    Ok(serde_json::from_slice(data)?)
 }
 
 #[pymodule]
 pub fn pypi_releases(_py: Python, module: &PyModule) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(parse, module)?)?;
+    module.add_function(wrap_pyfunction!(versions_from_json, module)?)?;
     module.add_class::<PypiReleases>()?;
     module.add_class::<File>()?;
     module.add_class::<Hashes>()?;
