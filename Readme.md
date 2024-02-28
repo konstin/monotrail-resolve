@@ -1,3 +1,5 @@
+**See https://github.com/astral-sh/uv**
+
 # Fast Python Dependency Resolution
 
 This is a prototype for a fast dependency resolver for python.
